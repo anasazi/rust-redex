@@ -67,20 +67,54 @@
   (term (x : int (z : int (y : int (x : int ∅))))))
 (test-results)
 
-'Γ-use
-(define-metafunction
+'x-≠
+(define-judgment-form
   patina
-  Γ-use : Γ x -> Γ
-  [(Γ-use (x_0 : τ Γ) x_0) Γ]
-  [(Γ-use (x_0 : τ Γ) x_1) (x_0 : τ (Γ-use Γ x_1))]
+  #:mode (x-≠ I I)
+  #:contract (x-≠ x x)
+  [------------------- "x-≠"
+   (x-≠ x_!_0 x_!_0)
+   ]
+  )
+
+(test-equal #t (judgment-holds (x-≠ x y)))
+(test-equal #f (judgment-holds (x-≠ x x)))
+(test-results)
+
+'Γ-use
+(define-judgment-form
+  patina
+  #:mode (Γ-use I I O)
+  #:contract (Γ-use Γ x Γ)
+  [------------------------- "Γ-use-here"
+   (Γ-use (x_0 : τ Γ) x_0 Γ)
+   ]
+  [(Γ-use Γ_0 x_1 Γ_1) (x-≠ x_0 x_1)
+   --------------------------------- "Γ-use-there"
+   (Γ-use (x_0 : τ Γ_0) x_1 Γ_1)
+   ]
   )
 
 (test-equal
-  (term (Γ-use (x : int ∅) x))
-  (term ∅))
+  (judgment-holds 
+    (Γ-use (x : int ∅) x Γ)
+    Γ)
+  '(∅))
 (test-equal
-  (term (Γ-use (x : int (x : int ∅)) x))
-  (term (x : int ∅)))
+  (judgment-holds 
+    (Γ-use (x : int (x : int ∅)) x Γ)
+    Γ)
+  '((x : int ∅)))
+(test-equal
+  (judgment-holds
+    (Γ-use (y : int ∅) x Γ)
+    Γ)
+  '())
+(test-equal
+  (judgment-holds
+    (Γ-use ∅ x Γ)
+    Γ)
+  '())
 (test-results)
 
 'Γ-get
@@ -136,8 +170,9 @@
   [------------- "Γ-⊆-∅"
    (Γ-⊆ ∅ Γ)
    ]
-  [(Γ-get Γ_1 x τ_1) (τ-= τ_0 τ_1) (Γ-⊆ Γ_0 (Γ-use Γ_1 x))
-   ------------------------------------------------------- "Γ-⊆-¬∅"
+  [(Γ-get Γ_1 x τ_1) (τ-= τ_0 τ_1) 
+   (Γ-use Γ_1 x Γ_2) (Γ-⊆ Γ_0 Γ_2)
+   ------------------------------- "Γ-⊆-¬∅"
    (Γ-⊆ (x : τ_0 Γ_0) Γ_1)
    ]
   )
@@ -213,7 +248,7 @@
    --------------------------------------- "τ-st->>"
    (τ-st Γ_0 (st_0 >> st_1) Γ_2)
    ]
-  [(where Γ_1 (Γ-use Γ_0 x))
+  [(Γ-use Γ_0 x Γ_1)
    ------------------------- "τ-st-delete-var"
    (τ-st Γ_0 (delete x) Γ_1)
    ]
