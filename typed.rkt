@@ -186,7 +186,7 @@
  #:contract (τ-lv Γ lv τ)
  [(Γ-get Γ x τ)
   ------------- "τ-lv-var"
-  (τ-lv Γ x τ) ; TODO this may need to be adjusted for linear types
+  (τ-lv Γ x τ)
   ]
  )
 
