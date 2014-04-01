@@ -39,7 +39,8 @@
   (blk (block (vd ...) (st ...)))
 
   ;;;; contexts for type checking
-  (Γ ∅ (x : τ  Γ))
+  (γ (x τ))
+  (Γ (γ ...))
 
   )
 
@@ -47,12 +48,12 @@
 (define-metafunction
   patina
   Γ-extend : Γ vd -> Γ
-  [(Γ-extend Γ (x : τ)) (x : τ Γ)]
+  [(Γ-extend (γ ...) (x : τ)) ((x τ) γ ...)]
   )
 
 (test-equal
-  (term (Γ-extend ∅ (x : int)))
-  (term (x : int ∅)))
+  (term (Γ-extend () (x : int)))
+  (term ((x int))))
 (test-results)
 
 'Γ-extend-many
@@ -64,8 +65,8 @@
   )
 
 (test-equal
-  (term (Γ-extend-many ∅ ((x : int) (y : int) (z : int) (x : int))))
-  (term (x : int (z : int (y : int (x : int ∅))))))
+  (term (Γ-extend-many () ((x : int) (y : int) (z : int) (x : int))))
+  (term ((x int) (z int) (y int) (x int))))
 (test-results)
 
 'x-≠
@@ -88,32 +89,32 @@
   #:mode (Γ-use I I O)
   #:contract (Γ-use Γ x Γ)
   [------------------------- "Γ-use-here"
-   (Γ-use (x_0 : τ Γ) x_0 Γ)
+   (Γ-use ((x_0 τ) γ ...) x_0 (γ ...))
    ]
-  [(Γ-use Γ_0 x_1 Γ_1) (x-≠ x_0 x_1)
+  [(Γ-use (γ ...) x_1 Γ_1) (x-≠ x_0 x_1)
    --------------------------------- "Γ-use-there"
-   (Γ-use (x_0 : τ Γ_0) x_1 Γ_1)
+   (Γ-use ((x_0 τ) γ ...) x_1 Γ_1)
    ]
   )
 
 (test-equal
   (judgment-holds 
-    (Γ-use (x : int ∅) x Γ)
+    (Γ-use ((x int)) x Γ)
     Γ)
-  '(∅))
+  '(()))
 (test-equal
   (judgment-holds 
-    (Γ-use (x : int (x : int ∅)) x Γ)
+    (Γ-use ((x int) (x int)) x Γ)
     Γ)
-  '((x : int ∅)))
+  '(((x int))))
 (test-equal
   (judgment-holds
-    (Γ-use (y : int ∅) x Γ)
+    (Γ-use ((y int)) x Γ)
     Γ)
   '())
 (test-equal
   (judgment-holds
-    (Γ-use ∅ x Γ)
+    (Γ-use () x Γ)
     Γ)
   '())
 (test-results)
@@ -124,27 +125,27 @@
   #:mode (Γ-get I I O)
   #:contract (Γ-get Γ x τ)
   [----------------------------- "Γ-get-here"
-   (Γ-get (x_0 : τ Γ) x_0 τ)
+   (Γ-get ((x_0 τ) γ ...) x_0 τ)
    ]
-  [(Γ-get Γ x_1 τ_1)
+  [(Γ-get (γ ...) x_1 τ_1) 
    --------------------------------- "Γ-get-there"
-   (Γ-get (x_0 : τ_0 Γ) x_1 τ_1)
+   (Γ-get ((x_0 τ_0) γ ...) x_1 τ_1)
    ]
   )
 
 (test-equal
   (judgment-holds
-    (Γ-get (x : int ∅) x τ)
+    (Γ-get ((x int)) x τ)
     τ)
   '(int))
 (test-equal
   (judgment-holds
-    (Γ-get (y : int (x : int ∅)) x τ)
+    (Γ-get ((y int) (x int)) x τ)
     τ)
   '(int))
 (test-equal
   (judgment-holds
-    (Γ-get ∅ x τ)
+    (Γ-get () x τ)
     τ)
   '())
 (test-results)
@@ -169,22 +170,22 @@
   #:mode (Γ-⊆ I I)
   #:contract (Γ-⊆ Γ Γ)
   [------------- "Γ-⊆-∅"
-   (Γ-⊆ ∅ Γ)
+   (Γ-⊆ () Γ)
    ]
   [(Γ-get Γ_1 x τ_1) (τ-= τ_0 τ_1) 
-   (Γ-use Γ_1 x Γ_2) (Γ-⊆ Γ_0 Γ_2)
+   (Γ-use Γ_1 x Γ_2) (Γ-⊆ (γ ...) Γ_2) 
    ------------------------------- "Γ-⊆-¬∅"
-   (Γ-⊆ (x : τ_0 Γ_0) Γ_1)
+   (Γ-⊆ ((x τ_0) γ ...) Γ_1)
    ]
   )
 
-(test-equal #t (judgment-holds (Γ-⊆ ∅ ∅)))
-(test-equal #t (judgment-holds (Γ-⊆ ∅ (x : int (y : int ∅)))))
-(test-equal #f (judgment-holds (Γ-⊆ (x : int ∅) ∅)))
-(test-equal #t (judgment-holds (Γ-⊆ (x : int ∅) (y : int (x : int ∅)))))
-(test-equal #f (judgment-holds (Γ-⊆ (x : int (x : int ∅)) (x : int ∅))))
-(test-equal #t (judgment-holds (Γ-⊆ (x : int (x : int ∅)) (x : int (x : int ∅)))))
-(test-equal #f (judgment-holds (Γ-⊆ (z : int ∅) (x : int ∅))))
+(test-equal #t (judgment-holds (Γ-⊆ () ())))
+(test-equal #t (judgment-holds (Γ-⊆ () ((x int) (y int)))))
+(test-equal #f (judgment-holds (Γ-⊆ ((x int)) ())))
+(test-equal #t (judgment-holds (Γ-⊆ ((x int)) ((y int) (x int)))))
+(test-equal #f (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int)))))
+(test-equal #t (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int) (x int)))))
+(test-equal #f (judgment-holds (Γ-⊆ ((z int)) ((x int)))))
 (test-results)
 
 'τ-lv
@@ -200,12 +201,12 @@
 
 (test-equal
  (judgment-holds 
-   (τ-lv (y : int (x : int (z : int ∅))) x τ)
+   (τ-lv ((y int) (x int) (z int)) x τ)
    τ) 
  '(int))
 (test-equal
   (judgment-holds
-    (τ-lv ∅ x τ)
+    (τ-lv () x τ)
     τ)
   '())
 (test-results)
@@ -226,14 +227,14 @@
 
 (test-equal
  (judgment-holds
-   (τ-rv ∅ 0 τ Γ)
+   (τ-rv () 0 τ Γ)
    (τ Γ))
- '((int ∅)))
+ '((int ())))
 (test-equal
  (judgment-holds
-   (τ-rv (x : int (y : int ∅)) (x + y) τ Γ)
+   (τ-rv ((x int) (y int)) (x + y) τ Γ)
    (τ Γ))
- '((int (x : int (y : int ∅)))))
+ '((int ((x int) (y int)))))
 (test-results)
 
 'τ-st
@@ -286,37 +287,37 @@
 
 (test-equal
   (judgment-holds
-    (τ-st (x : int ∅) (x = 1) Γ)
+    (τ-st ((x int)) (x = 1) Γ)
     Γ)
-  '((x : int ∅)))
+  '(((x int))))
 (test-equal
   (judgment-holds
-    (τ-st (x : int ∅) (delete x) Γ)
+    (τ-st ((x int)) (delete x) Γ)
     Γ)
-  '(∅))
+  '(()))
 (test-equal
   (judgment-holds
-    (τ-st (x : int ∅) (block () ((x = 1) (x = 2))) Γ)
+    (τ-st ((x int)) (block () ((x = 1) (x = 2))) Γ)
     Γ)
-  '((x : int ∅)))
+  '(((x int))))
 (test-equal
   (judgment-holds
-    (τ-blk (x : int ∅) (block () ((x = 1) (x = 2))) Γ)
+    (τ-blk ((x int)) (block () ((x = 1) (x = 2))) Γ)
     Γ)
-  '((x : int ∅)))
+  '(((x int))))
 (test-equal
   (judgment-holds
-    (τ-blk ∅ (block ((x : int)) ((x = 1) (delete x))) Γ)
+    (τ-blk () (block ((x : int)) ((x = 1) (delete x))) Γ)
     Γ)
-  '(∅))
+  '(()))
 (test-equal
   (judgment-holds
-    (τ-blk (x : int ∅) (block () ((delete x))) Γ)
+    (τ-blk ((x int)) (block () ((delete x))) Γ)
     Γ)
-  '(∅))
+  '(()))
 (test-equal
   (judgment-holds
-    (τ-blk ∅ (block ((x : int)) ((x = 1))) Γ)
+    (τ-blk () (block ((x : int)) ((x = 1))) Γ)
     Γ)
   '())
 (test-results)
