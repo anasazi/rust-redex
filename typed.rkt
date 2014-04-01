@@ -19,7 +19,6 @@
   ;;;; values
   (ℤ integer)
 
-
   ;; lvalues - assignable places
   (lv x       ; variable
       )
@@ -41,17 +40,21 @@
   )
 
 (define-extended-language patina-context patina
-  ;;;; contexts for type checking
+  ;;;; contexts
+  ;; variable types
   (γ (x τ))
   (Γ (γ ...))
 
   )
 
+'vd→γ
 (define-metafunction
   patina-context
   vd→γ : vd -> γ
   [(vd→γ (x : τ)) (x τ)]
   )
+
+(redex-check patina-context (x τ) (equal? (term (vd→γ (x : τ))) (term (x τ))))
 
 'Γ-extend
 (define-metafunction
@@ -75,6 +78,9 @@
    (x-≠ x_!_0 x_!_0)
    ]
   )
+
+(redex-check patina-context (x_0 x_1) (equal? (not (equal? (term x_0) (term x_1)))
+					      (term (x-≠ x_0 x_1))))
 
 (test-equal #t (judgment-holds (x-≠ x y)))
 (test-equal #f (judgment-holds (x-≠ x x)))
