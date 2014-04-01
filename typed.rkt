@@ -15,7 +15,6 @@
   ;;;; declarations
   ;; variables
   (vd (x : τ))
-  (vds (vd ...))
 
   ;;;; values
   (ℤ integer)
@@ -32,10 +31,12 @@
 
   ;; statements - things that only alter the heap
   (st (lv = rv)      ; assignment
-      (st >> st)     ; sequence statements
       (delete lv)    ; shallow destruction
-      (block vds st) ; extend context and make fresh lifetime (TODO lifetimes)
+      blk	     ; nested blocks
       )
+
+  ;; block - extend context and execute a sequence of statements (TODO fresh lifetime)
+  (blk (block (vd ...) (st ...)))
 
   ;;;; contexts for type checking
   (Γ ∅ (x : τ  Γ))
@@ -57,7 +58,7 @@
 'Γ-extend-many
 (define-metafunction
   patina
-  Γ-extend-many : Γ vds -> Γ
+  Γ-extend-many : Γ (vd ...) -> Γ
   [(Γ-extend-many Γ ()) Γ]
   [(Γ-extend-many Γ (vd_0 vd_1 ...)) (Γ-extend-many (Γ-extend Γ vd_0) (vd_1 ...))]
   )
@@ -244,18 +245,42 @@
    --------------------------------------- "τ-st-="
    (τ-st Γ_0 (lv = rv) Γ_1)
    ]
-  [(τ-st Γ_0 st_0 Γ_1) (τ-st Γ_1 st_1 Γ_2)
-   --------------------------------------- "τ-st->>"
-   (τ-st Γ_0 (st_0 >> st_1) Γ_2)
-   ]
   [(Γ-use Γ_0 x Γ_1)
    ------------------------- "τ-st-delete-var"
    (τ-st Γ_0 (delete x) Γ_1)
    ]
   ; TODO delete non-variables somehow
-  [(τ-st (Γ-extend-many Γ_0 vds) st Γ_1) (Γ-⊆ Γ_1 Γ_0)
-   --------------------------------------------------- "τ-st-bk"
-   (τ-st Γ_0 (block vds st) Γ_1)
+  [(τ-blk Γ_0 blk Γ_1)
+   ------------------- "τ-st-block"
+   (τ-st Γ_0 blk Γ_1)
+   ]
+  )
+
+; a helper judgment for τ-blk
+'τ-sts
+(define-judgment-form
+  patina
+  #:mode (τ-sts I I O)
+  #:contract (τ-sts Γ (st ...) Γ)
+  [------------------ "τ-sts-nil"
+   (τ-sts Γ_0 () Γ_0)
+   ]
+  [(τ-st Γ_0 st_0 Γ_1) 
+   (τ-sts Γ_1 (st_1 ...) Γ_n)
+   ------------------------------- "τ-sts-cons"
+   (τ-sts Γ_0 (st_0 st_1 ...) Γ_n)
+   ]
+  )
+
+'τ-blk
+(define-judgment-form
+  patina
+  #:mode (τ-blk I I O)
+  #:contract (τ-blk Γ blk Γ)
+  [(τ-sts (Γ-extend-many Γ_0 (vd ...)) (st ...) Γ_1)
+   (Γ-⊆ Γ_1 Γ_0)
+   ------------------------------------------------- "τ-blk"
+   (τ-blk Γ_0 (block (vd ...) (st ...)) Γ_1)
    ]
   )
 
@@ -266,27 +291,32 @@
   '((x : int ∅)))
 (test-equal
   (judgment-holds
-    (τ-st (x : int ∅) ((x = 1) >> (x = 2)) Γ)
-    Γ)
-  '((x : int ∅)))
-(test-equal
-  (judgment-holds
     (τ-st (x : int ∅) (delete x) Γ)
     Γ)
   '(∅))
 (test-equal
   (judgment-holds
-    (τ-st ∅ (block ((x : int)) ((x = 1) >> (delete x))) Γ)
+    (τ-st (x : int ∅) (block () ((x = 1) (x = 2))) Γ)
+    Γ)
+  '((x : int ∅)))
+(test-equal
+  (judgment-holds
+    (τ-blk (x : int ∅) (block () ((x = 1) (x = 2))) Γ)
+    Γ)
+  '((x : int ∅)))
+(test-equal
+  (judgment-holds
+    (τ-blk ∅ (block ((x : int)) ((x = 1) (delete x))) Γ)
     Γ)
   '(∅))
 (test-equal
   (judgment-holds
-    (τ-st (x : int ∅) (block () (delete x)) Γ)
+    (τ-blk (x : int ∅) (block () ((delete x))) Γ)
     Γ)
   '(∅))
 (test-equal
   (judgment-holds
-    (τ-st ∅ (block ((x : int)) (x = 1)) Γ)
+    (τ-blk ∅ (block ((x : int)) ((x = 1))) Γ)
     Γ)
   '())
 (test-results)
