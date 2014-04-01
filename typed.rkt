@@ -47,14 +47,18 @@
 
   )
 
+(define-metafunction
+  patina-context
+  vd→γ : vd -> γ
+  [(vd→γ (x : τ)) (x τ)]
+  )
+
 'Γ-extend
 (define-metafunction
   patina-context
   Γ-extend : Γ (vd ...) -> Γ
-  [(Γ-extend Γ ()) 
-   Γ]
-  [(Γ-extend Γ ((x : τ) vd ...)) 
-   (Γ-extend ,(cons (term (x τ)) (term Γ)) (vd ...))]
+  [(Γ-extend Γ (vd ...))
+   ,(append (map (λ (vd) (term (vd→γ ,vd))) (reverse (term (vd ...)))) (term Γ))]
   )
 
 (test-equal
