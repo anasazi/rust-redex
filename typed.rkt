@@ -38,6 +38,9 @@
   ;; block - extend context and execute a sequence of statements (TODO fresh lifetime)
   (blk (block (vd ...) (st ...)))
 
+  )
+
+(define-extended-language patina-context patina
   ;;;; contexts for type checking
   (γ (x τ))
   (Γ (γ ...))
@@ -46,7 +49,7 @@
 
 'Γ-extend
 (define-metafunction
-  patina
+  patina-context
   Γ-extend : Γ vd -> Γ
   [(Γ-extend (γ ...) (x : τ)) ((x τ) γ ...)]
   )
@@ -58,7 +61,7 @@
 
 'Γ-extend-many
 (define-metafunction
-  patina
+  patina-context
   Γ-extend-many : Γ (vd ...) -> Γ
   [(Γ-extend-many Γ ()) Γ]
   [(Γ-extend-many Γ (vd_0 vd_1 ...)) (Γ-extend-many (Γ-extend Γ vd_0) (vd_1 ...))]
@@ -85,7 +88,7 @@
 
 'Γ-use
 (define-judgment-form
-  patina
+  patina-context
   #:mode (Γ-use I I O)
   #:contract (Γ-use Γ x Γ)
   [------------------------- "Γ-use-here"
@@ -121,7 +124,7 @@
 
 'Γ-get
 (define-judgment-form
-  patina
+  patina-context
   #:mode (Γ-get I I O)
   #:contract (Γ-get Γ x τ)
   [----------------------------- "Γ-get-here"
@@ -166,7 +169,7 @@
 
 'Γ-⊆
 (define-judgment-form
-  patina
+  patina-context
   #:mode (Γ-⊆ I I)
   #:contract (Γ-⊆ Γ Γ)
   [------------- "Γ-⊆-∅"
@@ -190,7 +193,7 @@
 
 'τ-lv
 (define-judgment-form 
- patina
+ patina-context
  #:mode (τ-lv I I O)
  #:contract (τ-lv Γ lv τ)
  [(Γ-get Γ x τ)
@@ -213,7 +216,7 @@
 
 'τ-rv
 (define-judgment-form 
- patina
+ patina-context
  #:mode (τ-rv I I O O)
  #:contract (τ-rv Γ rv τ Γ)
  [ ---------------- "τ-rv-ℤ"
@@ -239,7 +242,7 @@
 
 'τ-st
 (define-judgment-form
-  patina
+  patina-context
   #:mode (τ-st I I O)
   #:contract (τ-st Γ st Γ)
   [(τ-lv Γ_0 lv τ_0) (τ-rv Γ_0 rv τ_0 Γ_1)
@@ -260,7 +263,7 @@
 ; a helper judgment for τ-blk
 'τ-sts
 (define-judgment-form
-  patina
+  patina-context
   #:mode (τ-sts I I O)
   #:contract (τ-sts Γ (st ...) Γ)
   [------------------ "τ-sts-nil"
@@ -275,7 +278,7 @@
 
 'τ-blk
 (define-judgment-form
-  patina
+  patina-context
   #:mode (τ-blk I I O)
   #:contract (τ-blk Γ blk Γ)
   [(τ-sts (Γ-extend-many Γ_0 (vd ...)) (st ...) Γ_1)
