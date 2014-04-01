@@ -50,25 +50,13 @@
 'Γ-extend
 (define-metafunction
   patina-context
-  Γ-extend : Γ vd -> Γ
-  [(Γ-extend (γ ...) (x : τ)) ((x τ) γ ...)]
+  Γ-extend : Γ (vd ...) -> Γ
+  [(Γ-extend Γ ()) Γ]
+  [(Γ-extend Γ ((x : τ) vd ...)) (Γ-extend ,(cons (term (x τ)) (term Γ)) (vd ...))]
   )
 
 (test-equal
-  (term (Γ-extend () (x : int)))
-  (term ((x int))))
-(test-results)
-
-'Γ-extend-many
-(define-metafunction
-  patina-context
-  Γ-extend-many : Γ (vd ...) -> Γ
-  [(Γ-extend-many Γ ()) Γ]
-  [(Γ-extend-many Γ (vd_0 vd_1 ...)) (Γ-extend-many (Γ-extend Γ vd_0) (vd_1 ...))]
-  )
-
-(test-equal
-  (term (Γ-extend-many () ((x : int) (y : int) (z : int) (x : int))))
+  (term (Γ-extend () ((x : int) (y : int) (z : int) (x : int))))
   (term ((x int) (z int) (y int) (x int))))
 (test-results)
 
@@ -281,7 +269,7 @@
   patina-context
   #:mode (τ-blk I I O)
   #:contract (τ-blk Γ blk Γ)
-  [(τ-sts (Γ-extend-many Γ_0 (vd ...)) (st ...) Γ_1)
+  [(τ-sts (Γ-extend Γ_0 (vd ...)) (st ...) Γ_1)
    (Γ-⊆ Γ_1 Γ_0)
    ------------------------------------------------- "τ-blk"
    (τ-blk Γ_0 (block (vd ...) (st ...)) Γ_1)
