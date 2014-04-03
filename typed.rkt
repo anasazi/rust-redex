@@ -494,6 +494,19 @@
 (test-equal (term (Γ-get ((x int)) x)) 'int)
 (test-equal (term (Γ-get ((y int) (x int)) x)) 'int)
 
+'Γ-del
+(define-metafunction
+  patina-context
+  Γ-del : Γ x -> Γ
+  [(Γ-del ((x_0 _) γ ...) x_0)
+   (γ ...)]
+  [(Γ-del ((x_0 τ) γ_0 ...) x_1)
+   ((x_0 τ) γ_1 ...)
+   (where (γ_1 ...) (Γ-del (γ_0 ...) x_1))])
+
+(test-equal (term (Γ-del ((x int) (y int)) x)) '((y int)))
+(test-equal (term (Γ-del ((x int) (y int)) y)) '((x int)))
+
 'Γ-use
 (define-judgment-form
   patina-context
@@ -538,37 +551,6 @@
     (Γ-use () x Γ)
     Γ)
   '())
-
-;'Γ-get
-;(define-judgment-form
-;  patina-context
-;  #:mode (Γ-get I I O)
-;  #:contract (Γ-get Γ x τ)
-;  [----------------------------- "Γ-get-here"
-;   (Γ-get ((x_0 τ) γ ...) x_0 τ)
-;   ]
-;  [(Γ-get (γ ...) x_1 τ_1) 
-;   --------------------------------- "Γ-get-there"
-;   (Γ-get ((x_0 τ_0) γ ...) x_1 τ_1)
-;   ]
-;  )
-;
-;(test-equal
-;  (judgment-holds
-;    (Γ-get ((x int)) x τ)
-;    τ)
-;  '(int))
-;(test-equal
-;  (judgment-holds
-;    (Γ-get ((y int) (x int)) x τ)
-;    τ)
-;  '(int))
-;(test-equal
-;  (judgment-holds
-;    (Γ-get () x τ)
-;    τ)
-;  '())
-
 
 'Γ-⊆
 (define-judgment-form
