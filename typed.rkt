@@ -63,6 +63,28 @@
   (V (v ...))
   )
 
+;; ADDRESS OPERATIONS
+'α-=
+(define-relation
+  patina-machine
+  α-= ⊆ α × α
+  [(α-= (ℕ_b ℕ_o) (ℕ_b ℕ_o))])
+
+(redex-check patina-machine (α) (term (α-= α α)))
+(test-equal #f (term (α-= (0 0) (1 0))))
+(test-equal #f (term (α-= (0 0) (0 1))))
+(test-equal #f (term (α-= (0 0) (1 1))))
+(test-results)
+
+'α-offset
+(define-metafunction
+  patina-machine
+  α-offset : α ℕ -> α
+  [(α-offset (ℕ_base ℕ_offset) ℕ_offset2) (ℕ_base ,(+ (term ℕ_offset) (term ℕ_offset2)))])
+
+(redex-check patina-machine (ℕ_base ℕ_orig ℕ_1 ℕ_2) (term (α-= (α-offset (α-offset (ℕ_base ℕ_orig) ℕ_1) ℕ_2)
+							       (α-offset (ℕ_base ℕ_orig) ,(+ (term ℕ_1) (term ℕ_2))))))
+
 ;; HEAP OPERATIONS
 'H-in
 (define-relation
@@ -240,7 +262,7 @@
 (test-results)
 
 'alloc
-(define-metafunction
+(define-judgment-form
   patina-machine
   #:mode (alloc I I I O O)
   #:contract (alloc H V vd H V)
@@ -263,6 +285,14 @@
      ((y (1 0)) (x (0 0)))
      )))
 (test-results)
+
+; make sure alloc works
+(redex-check patina-machine (H_0 V_0 x τ)
+  (redex-let patina-machine ([((H V)) (judgment-holds (alloc H_0 V_0 (x : τ) H V) (H V))])
+    (and (term (V-in V x))
+	 (term (H-in H (V-get V x)))
+	 (term (H-in H (α-offset (V-get V x) ,(- (term (sizeof τ)) 1))))
+	 )))
 
 'E-lv
 (define-judgment-form 
