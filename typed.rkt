@@ -3,6 +3,8 @@
 
 ;;;; NOTE I'm going to assume no variable shadowing occurs for now
 
+;;;; SYNTAX
+'patina
 (define-language patina
   ;;;; names for things
   ;; α-convertible
@@ -42,6 +44,348 @@
 
   )
 
+;;;; EVALUATION
+'patina-machine
+(define-extended-language patina-machine patina
+  ;;;; memory
+  ;; address = base + offset
+  (α (ℕ ℕ))
+  ;; hvalues - things that can be stored in memory
+  (hv (ptr α) ; an address can be stored in memory
+      (int ℤ) ; an integer can be stored in memory
+      ⊥	      ; invalid data can be stored in memory
+      )
+  ;; heap - map addresses to hvalues
+  (h (α hv))
+  (H (h ...))
+  ;; map variables to addresses
+  (v (x α))
+  (V (v ...))
+  )
+
+;; HEAP OPERATIONS
+'H-in
+(define-relation
+  patina-machine
+  H-in ⊆ H × α
+  [(H-in ((α_0 _) _ ...) α_0)]
+  [(H-in ((α_0 _) h ...) α_1)
+   (H-in (h ...) α_1)]
+  )
+
+(test-equal (term (H-in (((0 0) (int 0)) ((1 1) ⊥)) (0 0))) #t)
+(test-equal (term (H-in (((0 0) (int 0)) ((1 1) ⊥)) (1 1))) #t)
+(test-equal (term (H-in (((0 0) (int 0)) ((1 1) ⊥)) (0 1))) #f)
+(test-results)
+
+'H-get
+(define-metafunction
+  patina-machine
+  H-get : H α -> hv
+  [(H-get H α) ,(cadr (assoc (term α) (term H)))])
+
+(test-equal (term (H-get (((0 0) (int 0)) ((1 1) ⊥)) (0 0))) '(int 0))
+(test-equal (term (H-get (((0 0) (int 0)) ((1 1) ⊥)) (1 1))) '⊥)
+(test-results)
+
+'H-set
+(define-metafunction
+  patina-machine
+  H-set : H α hv -> H
+  [(H-set ((α_0 _) h ...) α_0 hv) 
+   ((α_0 hv) h ...)]
+  [(H-set ((α_0 hv_0) h_0 ...) α_1 hv_1)
+   ((α_0 hv_0) h_1 ...)
+   (where (h_1 ...) (H-set (h_0 ...) α_1 hv_1))]
+  )
+
+(test-equal
+  (term (H-set (((0 0) (int 0)) ((1 1) ⊥)) (0 0) (ptr (1 1))))
+  '(((0 0) (ptr (1 1))) ((1 1) ⊥)))
+(test-equal
+  (term (H-set (((0 0) (int 0)) ((1 1) ⊥)) (1 1) (int 1)))
+  '(((0 0) (int 0)) ((1 1) (int 1))))
+(test-results)
+
+; H-get respects H-set
+(redex-check patina-machine ((h ...) α hv)
+    (equal? (term hv) (term (H-get (H-set ((α ⊥) h ...) α hv) α))))
+
+'H-del
+(define-metafunction
+  patina-machine
+  H-del : H α -> H
+  [(H-del ((α_0 _) h ...) α_0)
+   (h ...)]
+  [(H-del ((α_0 hv) h_0 ...) α_1)
+   ((α_0 hv) h_1 ...)
+   (where (h_1 ...) (H-del (h_0 ...) α_1))]
+  )
+
+(test-equal
+  (term (H-del (((0 0) (int 0)) ((1 1) ⊥)) (0 0)))
+  '(((1 1) ⊥)))
+(test-equal
+  (term (H-del (((0 0) (int 0)) ((1 1) ⊥)) (1 1)))
+  '(((0 0) (int 0))))
+(test-results)
+
+'H-cons
+(define-metafunction
+  patina-machine
+  H-cons : H α hv -> H
+  [(H-cons H α hv) ,(cons (term (α hv)) (term H))]
+  )
+
+; H-cons => H-in
+(redex-check patina-machine (H α hv) (term (H-in (H-cons H α hv) α)))
+
+; H-get (H-cons α hv) α = hv
+(redex-check patina-machine (H α hv) (equal? (term (H-get (H-cons H α hv) α))
+					     (term hv)))
+
+; H-in (H-del (H-cons H)) = H-in H
+(redex-check patina-machine (H α hv) (equal? (term (H-in (H-del (H-cons H α hv) α) α)) 
+					     (term (H-in H α))))
+
+;; VARIBALE MAP OPERATIONS
+'V-in
+(define-relation
+  patina-machine
+  V-in ⊆ V × x
+  [(V-in ((x_0 _) _ ...) x_0)]
+  [(V-in ((x_0 _) v ...) x_1)
+   (V-in (v ...) x_1)]
+  )
+
+(test-equal (term (V-in ((x (0 0)) (y (1 1))) x)) #t)
+(test-equal (term (V-in ((x (0 0)) (y (1 1))) y)) #t)
+(test-equal (term (V-in ((x (0 0)) (y (1 1))) z)) #f)
+(test-results)
+
+'V-get
+(define-metafunction
+  patina-machine
+  V-get : V x -> α
+  [(V-get V x) ,(cadr (assoc (term x) (term V)))])
+
+(test-equal (term (V-get ((x (0 0)) (y (1 1))) x)) '(0 0))
+(test-equal (term (V-get ((x (0 0)) (y (1 1))) y)) '(1 1))
+(test-results)
+
+'V-set
+(define-metafunction
+  patina-machine
+  V-set : V x α -> V
+  [(V-set ((x_0 _) v ...) x_0 α) 
+   ((x_0 α) v ...)]
+  [(V-set ((x_0 α_0) v_0 ...) x_1 α_1)
+   ((x_0 α_0) v_1 ...)
+   (where (v_1 ...) (V-set (v_0 ...) x_1 α_1))]
+  )
+
+(test-equal
+  (term (V-set ((x (0 0)) (y (1 1))) x (0 1)))
+  '((x (0 1)) (y (1 1))))
+(test-equal
+  (term (V-set ((x (0 0)) (y (1 1))) y (1 0)))
+  '((x (0 0)) (y (1 0))))
+(test-results)
+
+; V-get respects V-set
+(redex-check patina-machine ((v ...) x α)
+    (equal? (term α) (term (V-get (V-set ((x (1000 1000)) v ...) x α) x))))
+
+'V-del
+(define-metafunction
+  patina-machine
+  V-del : V x -> V
+  [(V-del ((x_0 _) v ...) x_0)
+   (v ...)]
+  [(V-del ((x_0 α) v_0 ...) x_1)
+   ((x_0 α) v_1 ...)
+   (where (v_1 ...) (V-del (v_0 ...) x_1))]
+  )
+
+(test-equal
+  (term (V-del ((x (0 0)) (y (1 1))) x))
+  '((y (1 1))))
+(test-equal
+  (term (V-del ((x (0 0)) (y (1 1))) y))
+  '((x (0 0))))
+(test-results)
+
+'V-cons
+(define-metafunction
+  patina-machine
+  V-cons : V x α -> V
+  [(V-cons V x α) ,(cons (term (x α)) (term V))]
+  )
+
+; V-cons => V-in
+(redex-check patina-machine (V x α) (term (V-in (V-cons V x α) x)))
+
+; V-in (V-del (V-cons V)) = V-in V
+(redex-check patina-machine (V x α) (equal? (term (V-in (V-del (V-cons V x α) x) x)) 
+					    (term (V-in V x))))
+
+'sizeof
+(define-metafunction
+  patina-machine
+  sizeof : τ -> ℕ 
+  [(sizeof int) 1]
+  )
+
+(test-equal (term (sizeof int)) '1)
+(test-results)
+
+'alloc
+(define-metafunction
+  patina-machine
+  #:mode (alloc I I I O O)
+  #:contract (alloc H V vd H V)
+  [(where ℕ_base ,(+ 1 (apply max (cons -1 (map caar (term H_0)))))) ; find the next base address
+   (where V_1 ,(cons (term (x (ℕ_base 0))) (term V_0))) ; map x to the start of it
+   (where ℕ_size (sizeof τ)) ; compute the size of the type
+   (where H_new ,(map (λ (x) `((,(term ℕ_base) ,x) ⊥)) (range (term ℕ_size)))) ; make new space
+   (where H_1 ,(append (term H_new) (term H_0))) ; add it to the heap
+   -------------------------------------------------------------------------- "alloc"
+   (alloc H_0 V_0 (x : τ) H_1 V_1)
+   ]
+  )
+
+(test-equal
+  (judgment-holds
+    (alloc (((0 0) (int 0))) ((x (0 0))) (y : int) H V)
+    (H V))
+  '((
+     (((1 0) ⊥) ((0 0) (int 0)))
+     ((y (1 0)) (x (0 0)))
+     )))
+(test-results)
+
+'E-lv
+(define-judgment-form 
+  patina-machine
+  #:mode (E-lv I I I O)
+  #:contract (E-lv H V lv α)
+  [(where α (V-get V x))
+   --------------------- "E-lv-var"
+   (E-lv H V x α)
+   ]
+  )
+
+(test-equal
+  (judgment-holds 
+    (E-lv () ((a (0 0)) (d (12 321)) (n (123 12321))) d α)
+    α)
+  '((12 321)))
+(test-results)
+
+'E-rv
+(define-judgment-form
+  patina-machine
+  #:mode (E-rv I I I O O O)
+  #:contract (E-rv H V rv H V hv)
+  [------------------------ "E-rv-ℤ"
+   (E-rv H V ℤ H V (int ℤ))
+   ]
+  [(E-lv H V lv_0 α_0) 
+   (E-lv H V lv_1 α_1)
+   (where (int ℤ_0) (H-get H α_0))
+   (where (int ℤ_1) (H-get H α_1))
+   (where ℤ_2 ,(+ (term ℤ_0) (term ℤ_1)))
+   -------------------------------------- "E-rv-+"
+   (E-rv H V (lv_0 + lv_1) H V (int ℤ_2))
+   ]
+  )
+
+(test-equal
+  (judgment-holds
+    (E-rv (((0 0) (int 1)) ((1 0) (int 2)))
+	  ((a (0 0)) (b (1 0))) 
+	  (a + b) 
+	  H V hv)
+    (H V hv))
+  '(((((0 0) (int 1)) ((1 0) (int 2)))
+     ((a (0 0)) (b (1 0)))
+     (int 3))))
+(test-results)
+
+'patina-step
+(define patina-step
+  (reduction-relation
+    patina-machine
+    #:domain (H V (st ...))
+
+    (--> 
+      (H_0 V_0 ((lv = rv) st ...)) 
+      (H_2 V_1 (st ...)) 
+      (judgment-holds (E-lv H_0 V_0 lv α)) 
+      (judgment-holds (E-rv H_0 V_0 rv H_1 V_1 hv)) 
+      (where H_2 (H-set H_1 α hv)) 
+      "assignment"
+      )
+
+    (-->
+      (H_0 V_0 ((delete x) st ...))
+      (H_1 V_1 (st ...))
+      (judgment-holds (E-lv H_0 V_0 x α))
+      (where V_1 (V-del V_0 x))
+      (where H_1 (H-del H_0 α)) 
+      "delete-var"
+      )
+
+    (-->
+      (H_0 V_0 ((block (vd) (st ...))))
+      (H_1 V_1 (st ...))
+      (judgment-holds (alloc H_0 V_0 vd H_1 V_1))
+      "block-alloc-last-var"
+      )
+
+    (-->
+      (H_0 V_0 ((block (vd_0 vd_1 vd_2 ...) (st ...))))
+      (H_1 V_1 ((block (vd_1 vd_2 ...) (st ...))))
+      (judgment-holds (alloc H_0 V_0 vd_0 H_1 V_1))
+      "block-alloc-one-var"
+      )
+
+    )
+  )
+
+(test-->> patina-step
+  (term (() () ()))
+  (term (() () ())))
+
+(test-->> patina-step
+  (term ((((0 0) ⊥)) ((x (0 0))) ()))
+  (term ((((0 0) ⊥)) ((x (0 0))) ()))
+  )
+
+(test-->> patina-step
+  (term ((((0 0) (int 0))) ((x (0 0))) ((x = 1))))
+  (term ((((0 0) (int 1))) ((x (0 0))) ()))
+  )
+
+(test-->> patina-step
+  (term ((((0 0) (int 0))) ((x (0 0))) ((delete x))))
+  (term (()                ()          ()          ))
+  )
+
+(test-->> patina-step
+  (term (() () ((block ((x : int) (y : int)) ()))))
+  (term ((((1 0) ⊥) ((0 0) ⊥)) ((y (1 0)) (x (0 0))) ()))
+  )
+
+(test-->> patina-step
+  (term (() () ((block ((x : int) (y : int)) ((delete y) (delete x))))))
+  (term (() () ())))
+
+(test-results)
+
+
+;;;; TYPING
+'patina-context
 (define-extended-language patina-context patina
   ;;;; contexts
   ;; variable types
@@ -78,7 +422,7 @@
   patina
   #:mode (x-≠ I I)
   #:contract (x-≠ x x)
-  [------------------- "x-≠"
+  [----------------- "x-≠"
    (x-≠ x_!_0 x_!_0)
    ]
   )
@@ -493,202 +837,6 @@
     (τ-blk () () (block ((x : int)) ((x = 1))) I)
     I)
   '())
-(test-results)
-
-(define-extended-language patina-machine patina
-  ;;;; memory
-  ;; address = base + offset
-  (α (ℕ ℕ))
-  ;; hvalues - things that can be stored in memory
-  (hv (ptr α) ; an address can be stored in memory
-      (int ℤ) ; an integer can be stored in memory
-      ⊥	      ; invalid data can be stored in memory
-      )
-  ;; heap - map addresses to hvalues
-  (h (α hv))
-  (H (h ...))
-  ;; map variables to addresses
-  (v (x α))
-  (V (v ...))
-  )
-
-'get
-(define (get x l) (cadr (assoc x l)))
-'put
-(define (put x v l) (map (λ (p) (if (equal? (car p) x) `(,x ,v) p)) l))
-'del
-(define (del x l) (filter (λ (p) (not (equal? x (car p)))) l))
-
-(test-equal
-  (get 'x '((x 0) (y 1)))
-  0)
-(test-equal
-  (put 'x 1 '((x 0) (y 1)))
-  '((x 1) (y 1)))
-(test-equal
-  (del 'x '((x 0) (y 1)))
-  '((y 1)))
-(test-results)
-
-'sizeof
-(define-judgment-form
-  patina-machine
-  #:mode (sizeof I O)
-  #:contract (sizeof τ ℕ)
-  [-------------- "sizeof-int"
-   (sizeof int 1)
-   ]
-  )
-
-(test-equal
-  (judgment-holds
-    (sizeof int ℕ)
-    ℕ)
-  '(1))
-(test-results)
-
-'alloc
-(define-judgment-form
-  patina-machine
-  #:mode (alloc I I I O O)
-  #:contract (alloc H V vd H V)
-  [(where ℕ_base ,(+ 1 (apply max (cons -1 (map caar (term H_0)))))) ; find the next base address
-   (where V_1 ,(cons (term (x (ℕ_base 0))) (term V_0))) ; map x to the start of it
-   (sizeof τ ℕ_size) ; compute the size of the type
-   (where H_new ,(map (λ (x) `((,(term ℕ_base) ,x) ⊥)) (range (term ℕ_size)))) ; make new space
-   (where H_1 ,(append (term H_new) (term H_0))) ; add it to the heap
-   -------------------------------------------------------------------------- "alloc"
-   (alloc H_0 V_0 (x : τ) H_1 V_1)
-   ]
-  )
-
-(test-equal
-  (judgment-holds
-    (alloc (((0 0) (int 0))) ((x (0 0))) (y : int) H V)
-    (H V))
-  '((
-     (((1 0) ⊥) ((0 0) (int 0)))
-     ((y (1 0)) (x (0 0)))
-     )))
-(test-results)
-
-'E-lv
-(define-judgment-form 
-  patina-machine
-  #:mode (E-lv I I I O)
-  #:contract (E-lv H V lv α)
-  [(where α ,(get (term x) (term V)))
-   ------------------------------------- "E-lv-var"
-   (E-lv H V x α)
-   ]
-  )
-
-(test-equal
-  (judgment-holds 
-    (E-lv () ((a (0 0)) (d (12 321)) (n (123 12321))) d α)
-    α)
-  '((12 321)))
-(test-results)
-
-'E-rv
-(define-judgment-form
-  patina-machine
-  #:mode (E-rv I I I O O O)
-  #:contract (E-rv H V rv H V hv)
-  [------------------------ "E-rv-ℤ"
-   (E-rv H V ℤ H V (int ℤ))
-   ]
-  [(E-lv H V lv_0 α_0) 
-   (E-lv H V lv_1 α_1)
-   (where (int ℤ_0) ,(get (term α_0) (term H)))
-   (where (int ℤ_1) ,(get (term α_1) (term H)))
-   (where ℤ_2 ,(+ (term ℤ_0) (term ℤ_1)))
-   ----------------------------------------------------- "E-rv-+"
-   (E-rv H V (lv_0 + lv_1) H V (int ℤ_2))
-   ]
-  )
-
-(test-equal
-  (judgment-holds
-    (E-rv (((0 0) (int 1)) ((1 0) (int 2)))
-	  ((a (0 0)) (b (1 0))) 
-	  (a + b) 
-	  H V hv)
-    (H V hv))
-  '(((((0 0) (int 1)) ((1 0) (int 2)))
-     ((a (0 0)) (b (1 0)))
-     (int 3))))
-(test-results)
-
-'patina-step
-(define patina-step
-  (reduction-relation
-    patina-machine
-    #:domain (H V (st ...))
-
-    (--> 
-      (H_0 V_0 ((lv = rv) st ...)) 
-      (H_2 V_1 (st ...)) 
-      (judgment-holds (E-lv H_0 V_0 lv α)) 
-      (judgment-holds (E-rv H_0 V_0 rv H_1 V_1 hv)) 
-      (where H_2 ,(put (term α) (term hv) (term H_1))) 
-      "assignment"
-      )
-
-    (-->
-      (H_0 V_0 ((delete x) st ...))
-      (H_1 V_1 (st ...))
-      (judgment-holds (E-lv H_0 V_0 x α))
-      (where V_1 ,(del (term x) (term V_0)))
-      (where H_1 ,(del (term α) (term H_0)))
-      "delete-var"
-      )
-
-    (-->
-      (H_0 V_0 ((block (vd) (st ...))))
-      (H_1 V_1 (st ...))
-      (judgment-holds (alloc H_0 V_0 vd H_1 V_1))
-      "block-alloc-last-var"
-      )
-
-    (-->
-      (H_0 V_0 ((block (vd_0 vd_1 vd_2 ...) (st ...))))
-      (H_1 V_1 ((block (vd_1 vd_2 ...) (st ...))))
-      (judgment-holds (alloc H_0 V_0 vd_0 H_1 V_1))
-      "block-alloc-one-var"
-      )
-
-    )
-  )
-
-(test-->> patina-step
-  (term (() () ()))
-  (term (() () ())))
-
-(test-->> patina-step
-  (term ((((0 0) ⊥)) ((x (0 0))) ()))
-  (term ((((0 0) ⊥)) ((x (0 0))) ()))
-  )
-
-(test-->> patina-step
-  (term ((((0 0) (int 0))) ((x (0 0))) ((x = 1))))
-  (term ((((0 0) (int 1))) ((x (0 0))) ()))
-  )
-
-(test-->> patina-step
-  (term ((((0 0) (int 0))) ((x (0 0))) ((delete x))))
-  (term (()                ()          ()          ))
-  )
-
-(test-->> patina-step
-  (term (() () ((block ((x : int) (y : int)) ()))))
-  (term ((((1 0) ⊥) ((0 0) ⊥)) ((y (1 0)) (x (0 0))) ()))
-  )
-
-(test-->> patina-step
-  (term (() () ((block ((x : int) (y : int)) ((delete y) (delete x))))))
-  (term (() () ())))
-
 (test-results)
 
 ;(define-union-language patina-context-machine patina-context patina-machine)
