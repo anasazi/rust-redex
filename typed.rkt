@@ -435,7 +435,7 @@
 
 ;;;; TYPING
 'patina-context
-(define-extended-language patina-context patina
+(define-extended-language patina-context patina-machine
   ;;;; contexts
   ;; variable types
   (γ (x τ))
