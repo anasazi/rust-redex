@@ -1,8 +1,6 @@
 #lang racket
 (require redex)
 
-;;;; NOTE I'm going to assume no variable shadowing occurs for now
-
 ;;;; SYNTAX
 'patina
 (define-language patina
@@ -507,51 +505,6 @@
 (test-equal (term (Γ-del ((x int) (y int)) x)) '((y int)))
 (test-equal (term (Γ-del ((x int) (y int)) y)) '((x int)))
 
-'Γ-use
-(define-judgment-form
-  patina-context
-  #:mode (Γ-use I I O)
-  #:contract (Γ-use Γ x Γ)
-  [----------------------------------- "Γ-use-here"
-   (Γ-use ((x_0 τ) γ ...) x_0 (γ ...))
-   ]
-  [(Γ-use (γ_0 ...) x_1 (γ_1 ...)) (x-≠ x_0 x_1)
-   ----------------------------------------------- "Γ-use-there"
-   (Γ-use ((x_0 τ) γ_0 ...) x_1 ((x_0 τ) γ_1 ...))
-   ]
-  )
-
-(test-equal
-  (judgment-holds 
-    (Γ-use ((x int)) x Γ)
-    Γ)
-  '(()))
-;(test-equal
-  ;(judgment-holds 
-    ;(Γ-use ((x int) (x int)) x Γ)
-    ;Γ)
-  ;'(((x int))))
-(test-equal
-  (judgment-holds 
-    (Γ-use ((x int) (y int)) x Γ)
-    Γ)
-  '(((y int))))
-(test-equal
-  (judgment-holds 
-    (Γ-use ((y int) (x int)) x Γ)
-    Γ)
-  '(((y int))))
-(test-equal
-  (judgment-holds
-    (Γ-use ((y int)) x Γ)
-    Γ)
-  '())
-(test-equal
-  (judgment-holds
-    (Γ-use () x Γ)
-    Γ)
-  '())
-
 'Γ-⊆
 (define-judgment-form
   patina-context
@@ -563,7 +516,7 @@
   [(Γ-in Γ_1 x)
    (where τ_1 (Γ-get Γ_1 x)) ; make sure x is in Γ_1 ...
    (τ-= τ_0 τ_1)     ; ... as has the type we expect (i.e. τ_0)
-   (Γ-use Γ_1 x Γ_2) ; remove x from Γ_1 ...
+   (where Γ_2 (Γ-del Γ_1 x)) ; remove x from Γ_1
    (Γ-⊆ (γ ...) Γ_2) ; ... and recurse
    ----------------------------------- "Γ-⊆-¬∅"
    (Γ-⊆ ((x τ_0) γ ...) Γ_1)
@@ -575,127 +528,103 @@
 (test-equal #f (judgment-holds (Γ-⊆ ((x int)) ())))
 (test-equal #t (judgment-holds (Γ-⊆ ((x int)) ((y int) (x int)))))
 (test-equal #t (judgment-holds (Γ-⊆ ((x int) (y int)) ((y int) (x int)))))
-;(test-equal #f (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int)))))
-;(test-equal #t (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int) (x int)))))
+(test-equal #f (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int)))))
+(test-equal #t (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int) (x int)))))
 (test-equal #f (judgment-holds (Γ-⊆ ((z int)) ((x int)))))
 
-'initialized
-(define-judgment-form
+'I-in
+(define-relation
   patina-context
-  #:mode (initialized I I)
-  #:contract (initialized I lv)
-  [---------------------------------- "initialized-here"
-   (initialized (lv_0 lv_1 ...) lv_0)
-   ]
-  [(initialized (lv_1 ...) lv_2)
-   ---------------------------------- "initialized-there"
-   (initialized (lv_0 lv_1 ...) lv_2)
-   ]
-  )
+  I-in ⊆ I × lv
+  [(I-in (lv_0 _ ...) lv_0)]
+  [(I-in (lv_0 lv_1 ...) lv_2)
+   (I-in (lv_1 ...) lv_2)])
 
 (redex-check patina-context (lv_0 lv_1 ...)
   (equal? (if (member (term lv_0) (term (lv_1 ...))) #t #f)
-	  (judgment-holds (initialized (lv_1 ...) lv_0))))
+	  (term (I-in (lv_1 ...) lv_0))))
 
-'uninitialized
-(define-judgment-form
+(test-equal #t (term (I-in (x y x) x)))
+(test-equal #t (term (I-in (x y x) y)))
+(test-equal #t (term (I-in (x y x) x)))
+(test-equal #f (term (I-in (x y z) w)))
+
+'I-out
+(define-relation
   patina-context
-  #:mode (uninitialized I I)
-  #:contract (uninitialized I lv)
-  [--------------------- "uninitialized-here"
-   (uninitialized () lv)
-   ]
-  [(lv-≠ lv_0 lv_2)
-   (uninitialized (lv_1 ...) lv_2)
-   ------------------------------------ "uninitialized-there"
-   (uninitialized (lv_0 lv_1 ...) lv_2)
-   ]
-  )
+  I-out ⊆ I × lv
+  [(I-out I lv)
+   (side-condition (not (term (I-in I lv))))])
 
-(redex-check patina-context (lv_0 lv_1 ...)
-  (equal? (not (if (member (term lv_0) (term (lv_1 ...))) #t #f))
-	  (judgment-holds (uninitialized (lv_1 ...) lv_0))))
+(redex-check patina-context (lv I) (equal? (not (term (I-in I lv))) 
+					   (term (I-out I lv))))
 
-'initialize
-(define-judgment-form
+(test-equal #f (term (I-out (x y x) x)))
+(test-equal #f (term (I-out (x y x) y)))
+(test-equal #f (term (I-out (x y x) x)))
+(test-equal #t (term (I-out (x y z) w)))
+
+'I-cons
+(define-metafunction
   patina-context
-  #:mode (initialize I I O)
-  #:contract (initialize I lv I)
-  [(initialized I_0 lv)
-   ----------------------- "initalize-already"
-   (initialize I_0 lv I_0)
-   ]
-  [(uninitialized (lv_0 ...) lv_1)
-   (where I_1 (lv_1 lv_0 ...))
-   -------------------------------- "initialize-not-already"
-   (initialize (lv_0 ...) lv_1 I_1)
-   ]
-  )
+  I-cons : I lv -> I
+  [(I-cons I lv) 
+   ,(cons (term lv) (term I))
+   (side-condition (term (I-out I lv)))]
+  [(I-cons I lv)
+   I
+   (side-condition (term (I-in I lv)))])
 
-(redex-check patina-context (lv_0 lv_1 ...)
-  (redex-let patina-context ([(I) (judgment-holds (initialize (lv_1 ...) lv_0 I) I)])
-      (judgment-holds (initialized I lv_0))))
+(test-equal '(x) (term (I-cons () x)))
+(test-equal '(x) (term (I-cons (x) x)))
 
-'deinitialize
-(define-judgment-form
+; I-cons => I-in
+(redex-check patina-context (lv I) (term (I-in (I-cons I lv) lv)))
+
+'I-del
+(define-metafunction
   patina-context
-  #:mode (deinitialize I I O)
-  #:contract (deinitialize I lv I)
-  [(uninitialized (lv_1 ...) lv_0) ; finally done
-   ---------------------------------------------- "deinitialize-here-done"
-   (deinitialize (lv_0 lv_1 ...) lv_0 (lv_1 ...))
+  I-del : I lv -> I
+  [(I-del (lv_0 lv_1 ...) lv_0)
+   (lv_1 ...)
    ]
-  [(initialized (lv_1 ...) lv_0) ; still more to do
-   (deinitialize (lv_1 ...) lv_0 I)
-   ------------------------------------- "deinitialize-here-continue"
-   (deinitialize (lv_0 lv_1 ...) lv_0 I)
-   ]
-  [(lv-≠ lv_0 lv_2)
-   (initialized (lv_0 lv_1 ...) lv_2) ; no double deinitialize
-   (deinitialize (lv_1 ...) lv_2 (lv_3 ...))
-   --------------------------------------------------- "deinitialize-there"
-   (deinitialize (lv_0 lv_1 ...) lv_2 (lv_0 lv_3 ...))
-   ]
-  )
+  [(I-del (lv_0 lv_1 ...) lv_2)
+   (lv_0 lv_3 ...)
+   (where (lv_3 ...) (I-del (lv_1 ...) lv_2))
+   ])
 
-(redex-check patina-context (lv_0 lv_1 ...)
-  (redex-let* patina-context ([(I_0) (judgment-holds (initialize (lv_1 ...) lv_0 I) I)]
-			      [(I_1) (judgment-holds (deinitialize I_0 lv_0 I) I)])
-      (judgment-holds (uninitialized I_1 lv_0))))
+(test-equal '() (term (I-del (x) x)))
+(test-equal '(x) (term (I-del (x y) y)))
+
+; I-in (I-del (I-cons I)) = I-in I
+;(redex-check patina-context #:satisfying (I-out I lv) 
+  ;(term (I-out (I-del (I-cons I lv) lv) lv)))
 
 'I-⊆
-(define-judgment-form
+(define-relation
   patina-context
-  #:mode (I-⊆ I I)
-  #:contract (I-⊆ I I)
-  [---------- "I-⊆-∅"
-   (I-⊆ () I)
-   ]
-  [(initialized I_1 lv_0) ; make sure lv_0 is in I_1 ...
-   (deinitialize I_1 lv_0 I_2) ; remove lv_0 from I_1
-   (I-⊆ (lv_1 ...) I_2) ; ... and recurse
-   ----------------------------------- "I-⊆-¬∅"
-   (I-⊆ (lv_0 lv_1 ...) I_1)
+  I-⊆ ⊆ I × I
+  [(I-⊆ () I)]
+  [(I-⊆ (lv_0 lv_1 ...) I_1)
+   (I-in I_1 lv_0) ; make sure lv_0 is in I_1 ...
+   (I-⊆ (lv_1 ...) (I-del I_1 lv_0)) ; ... remove lv_0 from I_1 and recurse
    ]
   )
 
-(test-equal #t (judgment-holds (I-⊆ () ())))
-(test-equal #t (judgment-holds (I-⊆ () (x y))))
-(test-equal #f (judgment-holds (I-⊆ (x) ())))
-(test-equal #t (judgment-holds (I-⊆ (x) (y x))))
-(test-equal #t (judgment-holds (I-⊆ (x y) (y x))))
-;(test-equal #f (judgment-holds (I-⊆ (x x) (x)))))
-;(test-equal #t (judgment-holds (I-⊆ (x x) (x x))))
-(test-equal #f (judgment-holds (I-⊆ (z) (x))))
+(test-equal #t (term (I-⊆ () ())))
+(test-equal #t (term (I-⊆ () (x y))))
+(test-equal #f (term (I-⊆ (x) ())))
+(test-equal #t (term (I-⊆ (x) (y x))))
+(test-equal #t (term (I-⊆ (x y) (y x))))
+(test-equal #f (term (I-⊆ (z) (x))))
 
 'τ-lv
 (define-judgment-form 
  patina-context
  #:mode (τ-lv I I O)
  #:contract (τ-lv Γ lv τ)
- [(Γ-in Γ x)
-  (where τ (Γ-get Γ x))
-  ------------- "τ-lv-var"
+ [(Γ-in Γ x) (where τ (Γ-get Γ x))
+  -------------------------------- "τ-lv-var"
   (τ-lv Γ x τ)
   ]
  )
@@ -721,12 +650,12 @@
  patina-context
  #:mode (τ-rv I I I O O)
  #:contract (τ-rv Γ I rv τ I)
- [-------------------- "τ-rv-ℤ"
+ [------------------ "τ-rv-ℤ"
   (τ-rv Γ I ℤ int I)
   ]
  [(τ-lv Γ lv_0 int) (τ-lv Γ lv_1 int) 
-  (initialized I lv_0) (initialized I lv_1)
-  ----------------------------------------- "τ-rv-+"
+  (I-in I lv_0) (I-in I lv_1)
+  ----------------------------------- "τ-rv-+"
   (τ-rv Γ I (lv_0 + lv_1) int I)
   ]
  )
@@ -769,11 +698,11 @@
   #:contract (τ-st Γ I st I)
   [(τ-lv Γ lv τ_0) 
    (τ-rv Γ I_0 rv τ_0 I_1) 
-   (initialize I_1 lv I_2)
-   -------------------------- "τ-st-="
+   (where I_2 (I-cons I_1 lv))
+   --------------------------- "τ-st-="
    (τ-st Γ I_0 (lv = rv) I_2)
    ]
-  [(deinitialize I_0 lv I_1)
+  [(where I_1 (I-del I_0 lv))
    ; TODO make sure there are no initialized subpaths
    ---------------------------- "τ-st-delete"
    (τ-st Γ I_0 (delete lv) I_1)
@@ -848,38 +777,5 @@
     (τ-blk () () (block ((x : int)) ((x = 1))) I)
     I)
   '())
-
-;(define-union-language patina-context-machine patina-context patina-machine)
-
-;(define-judgment-form
-  ;patina-context-machine
-  ;#:mode (τ-hv I I O)
-  ;#:contract (τ-hv H hv τ)
-  ;[-------------------- "τ-hv-int"
-   ;(τ-hv H (int ℤ) int)
-   ;]
-  ;[(τ-hv H ,(get (term α) (term H)) τ)
-   ;----------------------------------- "τ-hv-ptr"
-   ;(τ-hv H (ptr α) τ)
-   ;]
-  ;)
-;
-;(define-metafunction
-  ;patina-context-machine
-  ;H+V→Γ : H V -> Γ
-  ;[(H+V→Γ () ()) ()]
-  ;[(H+V→Γ H ((x α) v ...))
-;
-;(define (types? H V sts)
-;  (equal? '(()) (judgment-holds (τ-sts () ,sts Γ) Γ)))
-;
-;(judgment-holds (τ-sts () ((block ((x : int) (y : int)) ((delete y) (delete x)))) Γ) Γ)
-;(judgment-holds (τ-sts () ((block ((x : int) (y : int)) ( (delete x)))) Γ) Γ)
-;(judgment-holds (τ-sts () ((block ((x : int) (y : int)) ( ))) Γ) Γ)
-;(types? (term ((block ((x : int) (y : int)) ((delete y) (delete x))))))
-;(types? (term ((block ((x : int) (y : int)) ( (delete x))))))
-;(types? (term ((block ((x : int) (y : int)) ( )))))
-;
-;(define (reduces? sts)
 
 (test-results)
