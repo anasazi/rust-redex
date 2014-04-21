@@ -2,780 +2,522 @@
 (require redex)
 
 ;;;; SYNTAX
-'patina
 (define-language patina
-  ;;;; names for things
-  ;; α-convertible
-  ; variables
+  ;; variables (α-convertible)
   (x variable-not-otherwise-mentioned)
-  ;; non α-convertible
+
+  ;; integers
+  (z integer)
+
+  ;; paths (lhs values)
+  (lv x      ; variable
+      (* lv) ; pointer dereference
+      )
+
+  ;; expressions (rhs values)
+  (rv z         ; integer constants
+      (lv + lv) ; addition (copies operands)
+      lv        ; use by moving from a path
+      (new lv)  ; move from a path into a new heap allocation
+      )
 
   ;; types
-  (τ int      ; integers
+  (τ int    ; integers
+     (~ τ)  ; owned pointer
      )
 
-  ;;;; declarations
-  ;; variables
+  ;; variable declaration
   (vd (x : τ))
 
-  ;;;; values
-  (ℕ natural)
-  (ℤ integer)
-
-  ;; lvalues - assignable places
-  (lv x       ; variable
-      )
-
-  ;; rvalues - result producing expressions
-  (rv ℤ           ; integer constants
-      (lv + lv)   ; addition
-      )
-
-  ;; statements - things that only alter the heap
-  (st (lv = rv)      ; assignment
-      (delete lv)    ; shallow destruction
-      blk	     ; nested blocks
-      )
-
-  ;; block - extend context and execute a sequence of statements
-  (blk (block (vd ...) (st ...)))
-
+  ;; statements
+  (s  ; sequence of statements
+     (s ...) 
+      ; extend context in a fresh lifetime by pushing onto the stack,
+      ; execute a statement,
+      ; and then pop all that off the stack.
+     (block (vd ...) s (vd ...)) 
+      ; assign to a path (path must be uninitialized)
+     (lv = rv)
+      ; shallow destruction.
+      ; subpaths must already be uninitialized.
+      ; frees heap memory.
+     (delete lv)
+     )
   )
-
-;; EQUALITY OPERATIONS
-
-'x-≠
-(define-relation
-  patina
-  x-≠ ⊆ x × x
-  [(x-≠ x_!_0 x_!_0)])
-
-(redex-check patina (x_0 x_1) (equal? (not (equal? (term x_0) (term x_1))) 
-				      (term (x-≠ x_0 x_1))))
-
-(test-equal #t (term (x-≠ x y)))
-(test-equal #f (term (x-≠ x x)))
-
-'τ-=
-(define-relation
-  patina
-  τ-= ⊆ τ × τ
-  [(τ-= int int)]
-  )
-
-(test-equal #t (term (τ-= int int)))
-
-'lv-≠
-(define-relation
-  patina
-  lv-≠ ⊆ lv × lv
-  [(lv-≠ x_0 x_1)
-   (x-≠ x_0 x_1)]
-  )
-
-(redex-check patina (lv_0 lv_1) (equal? (not (equal? (term lv_0) (term lv_1))) 
-					(term (lv-≠ lv_0 lv_1))))
-
 
 ;;;; EVALUATION
-'patina-machine
 (define-extended-language patina-machine patina
-  ;;;; memory
-  ;; address = base + offset
-  (α (ℕ ℕ))
-  ;; hvalues - things that can be stored in memory
-  (hv (ptr α) ; an address can be stored in memory
-      (int ℤ) ; an integer can be stored in memory
-      ⊥	      ; invalid data can be stored in memory
-      )
-  ;; heap - map addresses to hvalues
-  (h (α hv))
-  (H (h ...))
-  ;; map variables to addresses
-  (v (x α))
-  (V (v ...))
+  ;; natural numbers
+  (n natural)
+  ;; base of address (i.e. an allocation)
+  (β n)
+  ;; offset of address (i.e. position in an allocation)
+  (δ n)
+  ;; an address is a base and an offset
+  (α (β δ))
+  ;; values can go in memory
+  (v ⊥ ; uninitialized
+     z ; integers
+     α ; addresses
+     )
+  ;; memory (heap) maps address to values
+  (μ ((α v) ...))
+  ;; map from variables to addresses
+  (V ((x α) ...))
+
+  ;; context mapping variables to types
+  ; NB type checking results available at runtime
+  (Γ ((x τ) ...))
   )
 
-;; ADDRESS OPERATIONS
-'α-=
-(define-relation
-  patina-machine
-  α-= ⊆ α × α
-  [(α-= (ℕ_b ℕ_o) (ℕ_b ℕ_o))])
-
-(redex-check patina-machine (α) (term (α-= α α)))
-(test-equal #f (term (α-= (0 0) (1 0))))
-(test-equal #f (term (α-= (0 0) (0 1))))
-(test-equal #f (term (α-= (0 0) (1 1))))
-
-'α-offset
-(define-metafunction
-  patina-machine
-  α-offset : α ℕ -> α
-  [(α-offset (ℕ_base ℕ_offset) ℕ_offset2) (ℕ_base ,(+ (term ℕ_offset) (term ℕ_offset2)))])
-
-(redex-check patina-machine (ℕ_base ℕ_orig ℕ_1 ℕ_2) (term (α-= (α-offset (α-offset (ℕ_base ℕ_orig) ℕ_1) ℕ_2)
-							       (α-offset (ℕ_base ℕ_orig) ,(+ (term ℕ_1) (term ℕ_2))))))
-
-;; HEAP OPERATIONS
-'H-in
-(define-relation
-  patina-machine
-  H-in ⊆ H × α
-  [(H-in ((α_0 _) _ ...) α_0)]
-  [(H-in ((α_0 _) h ...) α_1)
-   (H-in (h ...) α_1)]
-  )
-
-(test-equal (term (H-in (((0 0) (int 0)) ((1 1) ⊥)) (0 0))) #t)
-(test-equal (term (H-in (((0 0) (int 0)) ((1 1) ⊥)) (1 1))) #t)
-(test-equal (term (H-in (((0 0) (int 0)) ((1 1) ⊥)) (0 1))) #f)
-
-'H-get
-(define-metafunction
-  patina-machine
-  H-get : H α -> hv
-  [(H-get H α) ,(cadr (assoc (term α) (term H)))])
-
-(test-equal (term (H-get (((0 0) (int 0)) ((1 1) ⊥)) (0 0))) '(int 0))
-(test-equal (term (H-get (((0 0) (int 0)) ((1 1) ⊥)) (1 1))) '⊥)
-
-'H-set
-(define-metafunction
-  patina-machine
-  H-set : H α hv -> H
-  [(H-set ((α_0 _) h ...) α_0 hv) 
-   ((α_0 hv) h ...)]
-  [(H-set ((α_0 hv_0) h_0 ...) α_1 hv_1)
-   ((α_0 hv_0) h_1 ...)
-   (where (h_1 ...) (H-set (h_0 ...) α_1 hv_1))]
-  )
-
-(test-equal
-  (term (H-set (((0 0) (int 0)) ((1 1) ⊥)) (0 0) (ptr (1 1))))
-  '(((0 0) (ptr (1 1))) ((1 1) ⊥)))
-(test-equal
-  (term (H-set (((0 0) (int 0)) ((1 1) ⊥)) (1 1) (int 1)))
-  '(((0 0) (int 0)) ((1 1) (int 1))))
-
-; H-get respects H-set
-(redex-check patina-machine ((h ...) α hv)
-    (equal? (term hv) (term (H-get (H-set ((α ⊥) h ...) α hv) α))))
-
-'H-del
-(define-metafunction
-  patina-machine
-  H-del : H α -> H
-  [(H-del ((α_0 _) h ...) α_0)
-   (h ...)]
-  [(H-del ((α_0 hv) h_0 ...) α_1)
-   ((α_0 hv) h_1 ...)
-   (where (h_1 ...) (H-del (h_0 ...) α_1))]
-  )
-
-(test-equal
-  (term (H-del (((0 0) (int 0)) ((1 1) ⊥)) (0 0)))
-  '(((1 1) ⊥)))
-(test-equal
-  (term (H-del (((0 0) (int 0)) ((1 1) ⊥)) (1 1)))
-  '(((0 0) (int 0))))
-
-'H-cons
-(define-metafunction
-  patina-machine
-  H-cons : H α hv -> H
-  [(H-cons H α hv) ,(cons (term (α hv)) (term H))]
-  )
-
-; H-cons => H-in
-(redex-check patina-machine (H α hv) (term (H-in (H-cons H α hv) α)))
-
-; H-get (H-cons α hv) α = hv
-(redex-check patina-machine (H α hv) (equal? (term (H-get (H-cons H α hv) α))
-					     (term hv)))
-
-; H-in (H-del (H-cons H)) = H-in H
-(redex-check patina-machine (H α hv) (equal? (term (H-in (H-del (H-cons H α hv) α) α)) 
-					     (term (H-in H α))))
-
-;; VARIBALE MAP OPERATIONS
-'V-in
-(define-relation
-  patina-machine
-  V-in ⊆ V × x
-  [(V-in ((x_0 _) _ ...) x_0)]
-  [(V-in ((x_0 _) v ...) x_1)
-   (V-in (v ...) x_1)]
-  )
-
-(test-equal (term (V-in ((x (0 0)) (y (1 1))) x)) #t)
-(test-equal (term (V-in ((x (0 0)) (y (1 1))) y)) #t)
-(test-equal (term (V-in ((x (0 0)) (y (1 1))) z)) #f)
-
-'V-get
-(define-metafunction
-  patina-machine
-  V-get : V x -> α
-  [(V-get V x) ,(cadr (assoc (term x) (term V)))])
-
-(test-equal (term (V-get ((x (0 0)) (y (1 1))) x)) '(0 0))
-(test-equal (term (V-get ((x (0 0)) (y (1 1))) y)) '(1 1))
-
-'V-set
-(define-metafunction
-  patina-machine
-  V-set : V x α -> V
-  [(V-set ((x_0 _) v ...) x_0 α) 
-   ((x_0 α) v ...)]
-  [(V-set ((x_0 α_0) v_0 ...) x_1 α_1)
-   ((x_0 α_0) v_1 ...)
-   (where (v_1 ...) (V-set (v_0 ...) x_1 α_1))]
-  )
-
-(test-equal
-  (term (V-set ((x (0 0)) (y (1 1))) x (0 1)))
-  '((x (0 1)) (y (1 1))))
-(test-equal
-  (term (V-set ((x (0 0)) (y (1 1))) y (1 0)))
-  '((x (0 0)) (y (1 0))))
-
-; V-get respects V-set
-(redex-check patina-machine ((v ...) x α)
-    (equal? (term α) (term (V-get (V-set ((x (1000 1000)) v ...) x α) x))))
-
-'V-del
-(define-metafunction
-  patina-machine
-  V-del : V x -> V
-  [(V-del ((x_0 _) v ...) x_0)
-   (v ...)]
-  [(V-del ((x_0 α) v_0 ...) x_1)
-   ((x_0 α) v_1 ...)
-   (where (v_1 ...) (V-del (v_0 ...) x_1))]
-  )
-
-(test-equal
-  (term (V-del ((x (0 0)) (y (1 1))) x))
-  '((y (1 1))))
-(test-equal
-  (term (V-del ((x (0 0)) (y (1 1))) y))
-  '((x (0 0))))
-
-'V-cons
-(define-metafunction
-  patina-machine
-  V-cons : V x α -> V
-  [(V-cons V x α) ,(cons (term (x α)) (term V))]
-  )
-
-; V-cons => V-in
-(redex-check patina-machine (V x α) (term (V-in (V-cons V x α) x)))
-
-; V-in (V-del (V-cons V)) = V-in V
-(redex-check patina-machine (V x α) (equal? (term (V-in (V-del (V-cons V x α) x) x)) 
-					    (term (V-in V x))))
-
-'sizeof
-(define-metafunction
-  patina-machine
-  sizeof : τ -> ℕ 
-  [(sizeof int) 1]
-  )
-
-(test-equal (term (sizeof int)) '1)
-
-'alloc
-(define-judgment-form
-  patina-machine
-  #:mode (alloc I I I O O)
-  #:contract (alloc H V vd H V)
-  [(where ℕ_base ,(+ 1 (apply max (cons -1 (map caar (term H_0)))))) ; find the next base address
-   (where V_1 ,(cons (term (x (ℕ_base 0))) (term V_0))) ; map x to the start of it
-   (where ℕ_size (sizeof τ)) ; compute the size of the type
-   (where H_new ,(map (λ (x) `((,(term ℕ_base) ,x) ⊥)) (range (term ℕ_size)))) ; make new space
-   (where H_1 ,(append (term H_new) (term H_0))) ; add it to the heap
-   -------------------------------------------------------------------------- "alloc"
-   (alloc H_0 V_0 (x : τ) H_1 V_1)
+;; address offset from an address
+(define-judgment-form patina-machine
+  #:mode (α+ I I O)
+  #:contract (α+ α n α)
+  [--------------------------------------- "α+"
+   (α+ (β δ) n (β ,(+ (term δ) (term n))))
    ]
   )
 
-(test-equal
-  (judgment-holds
-    (alloc (((0 0) (int 0))) ((x (0 0))) (y : int) H V)
-    (H V))
-  '((
-     (((1 0) ⊥) ((0 0) (int 0)))
-     ((y (1 0)) (x (0 0)))
-     )))
+; (α+ α 0 α)
+(redex-check patina-machine α (equal? (term (α)) (judgment-holds (α+ α 0 α_r) α_r)))
+; (α+ (α+ α n_0) n_1) = (α+ α (n_0 n_1))
+(redex-check patina-machine (α_0 n_0 n_1) 
+  (equal? 
+    (judgment-holds (α+ α_0 ,(+ (term n_0) (term n_1)) α) α)
+    (redex-let patina-machine 
+               [((α_1) (judgment-holds (α+ α_0 n_0 α) α))] 
+               (judgment-holds (α+ α_1 n_1 α_2) α_2))))
 
-; make sure alloc works
-(redex-check patina-machine (H_0 V_0 x τ)
-  (redex-let patina-machine ([((H V)) (judgment-holds (alloc H_0 V_0 (x : τ) H V) (H V))])
-    (and (term (V-in V x))
-	 (term (H-in H (V-get V x)))
-	 (term (H-in H (α-offset (V-get V x) ,(- (term (sizeof τ)) 1))))
-	 )))
-
-'E-lv
-(define-judgment-form 
-  patina-machine
-  #:mode (E-lv I I I O)
-  #:contract (E-lv H V lv α)
-  [(where α (V-get V x))
-   --------------------- "E-lv-var"
-   (E-lv H V x α)
+;; size of a type in memory
+(define-judgment-form patina-machine
+  #:mode (sizeof I O)
+  #:contract (sizeof τ n)
+  [----------- "sizeof int"
+   (sizeof int 1)
+   ]
+  [------------- "sizeof ~τ"
+   (sizeof (~ τ) 1)
    ]
   )
 
-(test-equal
-  (judgment-holds 
-    (E-lv () ((a (0 0)) (d (12 321)) (n (123 12321))) d α)
-    α)
-  '((12 321)))
+(test-equal (term (1)) (judgment-holds (sizeof int n) n))
+(redex-check patina-machine τ (equal? (term (1)) (judgment-holds (sizeof (~ τ) n) n)))
 
-'E-rv
-(define-judgment-form
-  patina-machine
-  #:mode (E-rv I I I O O O)
-  #:contract (E-rv H V rv H V hv)
-  [------------------------ "E-rv-ℤ"
-   (E-rv H V ℤ H V (int ℤ))
-   ]
-  [(E-lv H V lv_0 α_0) 
-   (E-lv H V lv_1 α_1)
-   (where (int ℤ_0) (H-get H α_0))
-   (where (int ℤ_1) (H-get H α_1))
-   (where ℤ_2 ,(+ (term ℤ_0) (term ℤ_1)))
-   -------------------------------------- "E-rv-+"
-   (E-rv H V (lv_0 + lv_1) H V (int ℤ_2))
+;; allocate space for a type
+(define-judgment-form patina-machine
+  #:mode (μ+ I I O O)
+  #:contract (μ+ μ τ α μ)
+  [(sizeof τ n)
+   (where (n_off ...) ,(range (term n)))
+   (where ((β_0 _) ...) (α_0 ...))
+   (where β_new ,(+ 1 (apply max (cons -1 (term (β_0 ...))))))
+   (α+ (β_new 0) n_off α_new) ...
+   --------------------------------------------------------------- "μ+"
+   (μ+ ((α_0 v_0) ...)  τ (β_new 0) ((α_0 v_0) ... (α_new ⊥) ...))
    ]
   )
 
-(test-equal
-  (judgment-holds
-    (E-rv (((0 0) (int 1)) ((1 0) (int 2)))
-	  ((a (0 0)) (b (1 0))) 
-	  (a + b) 
-	  H V hv)
-    (H V hv))
-  '(((((0 0) (int 1)) ((1 0) (int 2)))
-     ((a (0 0)) (b (1 0)))
-     (int 3))))
+(test-equal '((((0 0) ⊥))) (judgment-holds (μ+ () int α μ) μ))
+(test-equal '((((0 0) ⊥) ((0 1) ⊥) ((1 0) ⊥))) 
+            (judgment-holds (μ+ (((0 0) ⊥) ((0 1) ⊥)) (~ (~ int)) α μ) μ))
 
-'patina-step
-(define patina-step
-  (reduction-relation
-    patina-machine
-    #:domain (H V (st ...))
-
-    (--> 
-      (H_0 V_0 ((lv = rv) st ...)) 
-      (H_2 V_1 (st ...)) 
-      (judgment-holds (E-lv H_0 V_0 lv α)) 
-      (judgment-holds (E-rv H_0 V_0 rv H_1 V_1 hv)) 
-      (where H_2 (H-set H_1 α hv)) 
-      "assignment"
-      )
-
-    (-->
-      (H_0 V_0 ((delete x) st ...))
-      (H_1 V_1 (st ...))
-      (judgment-holds (E-lv H_0 V_0 x α))
-      (where V_1 (V-del V_0 x))
-      (where H_1 (H-del H_0 α)) 
-      "delete-var"
-      )
-
-    (-->
-      (H_0 V_0 ((block (vd) (st ...))))
-      (H_1 V_1 (st ...))
-      (judgment-holds (alloc H_0 V_0 vd H_1 V_1))
-      "block-alloc-last-var"
-      )
-
-    (-->
-      (H_0 V_0 ((block (vd_0 vd_1 vd_2 ...) (st ...))))
-      (H_1 V_1 ((block (vd_1 vd_2 ...) (st ...))))
-      (judgment-holds (alloc H_0 V_0 vd_0 H_1 V_1))
-      "block-alloc-one-var"
-      )
-
-    )
+;; set the value at an address in memory
+(define-judgment-form patina-machine
+  #:mode (μ<- I I I O)
+  #:contract (μ<- μ α v μ)
+  [--------------------------------------------------------------------------------------- "μ<-"
+   (μ<- ((α_s v_s) ... (α_0 _) (α_e v_e) ...) α_0 v ((α_s v_s) ... (α_0 v) (α_e v_e) ...))
+   ]
   )
 
-(test-->> patina-step
-  (term (() () ()))
-  (term (() () ())))
-
-(test-->> patina-step
-  (term ((((0 0) ⊥)) ((x (0 0))) ()))
-  (term ((((0 0) ⊥)) ((x (0 0))) ()))
+;; lookup address in memory to get value
+(define-judgment-form patina-machine
+  #:mode (μ= I I O)
+  #:contract (μ= μ α v)
+  [--------------------------------------------- "μ="
+   (μ= ((α_s _) ... (α_0 v) (α_e _) ...) α_0 v)
+   ]
   )
 
-(test-->> patina-step
-  (term ((((0 0) (int 0))) ((x (0 0))) ((x = 1))))
-  (term ((((0 0) (int 1))) ((x (0 0))) ()))
+;; move helper - thread the heap through moving a value on a sequence of addresses
+(define-judgment-form patina-machine
+  #:mode (μ->helper I I I O)
+  #:contract (μ->helper μ (α ...) (α ...) μ)
+  [--------------------- "μ->helper done"
+   (μ->helper μ () () μ)
+   ]
+  [(μ= μ_0 α_s0 v)
+   (μ<- μ_0 α_d0 v μ_1)
+   (μ<- μ_1 α_s0 ⊥ μ_2)
+   (μ->helper μ_2 (α_s1 ...) (α_d1 ...) μ_3)
+   ------------------------------------------------------- "μ->helper move one"
+   (μ->helper μ_0 (α_s0 α_s1 ..._0) (α_d0 α_d1 ..._0) μ_3)
+   ]
   )
 
-(test-->> patina-step
-  (term ((((0 0) (int 0))) ((x (0 0))) ((delete x))))
-  (term (()                ()          ()          ))
+;; move a type's worth of space to another spot on the heap
+(define-judgment-form patina-machine
+  #:mode (μ-> I I I I O)
+  #:contract (μ-> μ α τ α μ)
+  [(sizeof τ n) 
+   (where (n_off ...) ,(range (term n)))
+   (α+ α_s n_off α_s0) ...
+   (α+ α_d n_off α_d0) ...
+   (μ->helper μ_0 (α_s0 ...) (α_d0 ...) μ_1)
+   ---------------------------------------------- "μ->"
+   (μ-> μ_0 α_s τ α_d μ_1)
+   ]
   )
 
-(test-->> patina-step
-  (term (() () ((block ((x : int) (y : int)) ()))))
-  (term ((((1 0) ⊥) ((0 0) ⊥)) ((y (1 0)) (x (0 0))) ()))
+;; free space for a type from an address
+(define-judgment-form patina-machine
+  #:mode (μ- I I I O)
+  #:contract (μ- μ τ α μ)
+  [(sizeof τ n)
+   (where (n_off ...) ,(range (term n)))
+   (α+ α n_off α_0) ...
+   -------------------------------------------------------------------------------- "μ-"
+   (μ- ((α_s v_s) ... (α_0 _) ... (α_e v_e) ...) τ α ((α_s v_s) ... (α_e v_e) ...))
+   ]
   )
 
-(test-->> patina-step
-  (term (() () ((block ((x : int) (y : int)) ((delete y) (delete x))))))
-  (term (() () ())))
+;; lookup variable in map to get address
+(define-judgment-form patina-machine
+  #:mode (V= I I O)
+  #:contract (V= V x α)
+  [--------------------------------------------- "V="
+   (V= ((x_s _) ... (x_0 α) (x_e _) ...) x_0 α)
+   ]
+  )
 
-
+;; lookup type of a variable
+(define-judgment-form patina-machine
+  #:mode (Γ= I I O)
+  #:contract (Γ= Γ x τ)
+  [--------------------------------------------- "Γ="
+   (Γ= ((x_s _) ... (x_0 τ) (x_e _) ...) x_0 τ)
+   ]
+  )
 
 ;;;; TYPING
-'patina-context
-(define-extended-language patina-context patina-machine
-  ;;;; contexts
-  ;; variable types
-  (γ (x τ))
-  (Γ (γ ...))
-  ;; list of initialized paths
-  (I (lv ...))
-  ;; heap types
-  (hτ (ptr hτ)
-      int
-      ⊥)
-  (σ (α hτ))
-  (Σ (σ ...))
+(define-extended-language patina-checked patina-machine
+  ;; initialization flags
+  (ι ⊥ ; uninitialized
+     ⊤ ; initialized
+     )
+  ;; initialization of allocated paths
+  (Δ ((lv ι) ...))
+  ;; heap typing
+  (Σ ((α τ) ...))
   )
 
-'vd→γ
-(define-metafunction
-  patina-context
-  vd→γ : vd -> γ
-  [(vd→γ (x : τ)) (x τ)]
-  )
-
-(redex-check patina-context (x τ) (equal? (term (vd→γ (x : τ))) (term (x τ))))
-
-'Γ-extend
-(define-metafunction
-  patina-context
-  Γ-extend : Γ (vd ...) -> Γ
-  [(Γ-extend Γ (vd ...))
-   ,(append (map (λ (vd) (term (vd→γ ,vd))) (reverse (term (vd ...)))) (term Γ))]
-  )
-
-(test-equal
-  (term (Γ-extend () ((x : int) (y : int) (z : int) (x : int))))
-  (term ((x int) (z int) (y int) (x int))))
-
-'Γ-in
-(define-relation
-  patina-context
-  Γ-in ⊆ Γ × x
-  [(Γ-in ((x_0 _) _ ...) x_0)]
-  [(Γ-in ((x_0 _) γ ...) x_1)
-   (Γ-in (γ ...) x_1)])
-
-(test-equal #t (term (Γ-in ((x int) (y int)) x)))
-(test-equal #t (term (Γ-in ((x int) (y int)) y)))
-(test-equal #f (term (Γ-in ((x int) (y int)) z)))
-
-'Γ-get
-(define-metafunction
-  patina-context
-  Γ-get : Γ x -> τ
-  [(Γ-get Γ x) ,(cadr (assoc (term x) (term Γ)))])
-
-(test-equal (term (Γ-get ((x int)) x)) 'int)
-(test-equal (term (Γ-get ((y int) (x int)) x)) 'int)
-
-'Γ-del
-(define-metafunction
-  patina-context
-  Γ-del : Γ x -> Γ
-  [(Γ-del ((x_0 _) γ ...) x_0)
-   (γ ...)]
-  [(Γ-del ((x_0 τ) γ_0 ...) x_1)
-   ((x_0 τ) γ_1 ...)
-   (where (γ_1 ...) (Γ-del (γ_0 ...) x_1))])
-
-(test-equal (term (Γ-del ((x int) (y int)) x)) '((y int)))
-(test-equal (term (Γ-del ((x int) (y int)) y)) '((x int)))
-
-'Γ-⊆
-(define-judgment-form
-  patina-context
-  #:mode (Γ-⊆ I I)
-  #:contract (Γ-⊆ Γ Γ)
-  [---------- "Γ-⊆-∅"
-   (Γ-⊆ () Γ)
-   ]
-  [(Γ-in Γ_1 x)
-   (where τ_1 (Γ-get Γ_1 x)) ; make sure x is in Γ_1 ...
-   (τ-= τ_0 τ_1)     ; ... as has the type we expect (i.e. τ_0)
-   (where Γ_2 (Γ-del Γ_1 x)) ; remove x from Γ_1
-   (Γ-⊆ (γ ...) Γ_2) ; ... and recurse
-   ----------------------------------- "Γ-⊆-¬∅"
-   (Γ-⊆ ((x τ_0) γ ...) Γ_1)
+;; look up initialization status of a path
+(define-judgment-form patina-checked
+  #:mode (Δ= I I O)
+  #:contract (Δ= Δ lv ι)
+  [------------------------------------------------ "Δ="
+   (Δ= ((lv_s _) ... (lv_0 ι) (lv_e _) ...) lv_0 ι)
    ]
   )
 
-(test-equal #t (judgment-holds (Γ-⊆ () ())))
-(test-equal #t (judgment-holds (Γ-⊆ () ((x int) (y int)))))
-(test-equal #f (judgment-holds (Γ-⊆ ((x int)) ())))
-(test-equal #t (judgment-holds (Γ-⊆ ((x int)) ((y int) (x int)))))
-(test-equal #t (judgment-holds (Γ-⊆ ((x int) (y int)) ((y int) (x int)))))
-(test-equal #f (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int)))))
-(test-equal #t (judgment-holds (Γ-⊆ ((x int) (x int)) ((x int) (x int)))))
-(test-equal #f (judgment-holds (Γ-⊆ ((z int)) ((x int)))))
-
-'I-in
-(define-relation
-  patina-context
-  I-in ⊆ I × lv
-  [(I-in (lv_0 _ ...) lv_0)]
-  [(I-in (lv_0 lv_1 ...) lv_2)
-   (I-in (lv_1 ...) lv_2)])
-
-(redex-check patina-context (lv_0 lv_1 ...)
-  (equal? (if (member (term lv_0) (term (lv_1 ...))) #t #f)
-	  (term (I-in (lv_1 ...) lv_0))))
-
-(test-equal #t (term (I-in (x y x) x)))
-(test-equal #t (term (I-in (x y x) y)))
-(test-equal #t (term (I-in (x y x) x)))
-(test-equal #f (term (I-in (x y z) w)))
-
-'I-out
-(define-relation
-  patina-context
-  I-out ⊆ I × lv
-  [(I-out I lv)
-   (side-condition (not (term (I-in I lv))))])
-
-(redex-check patina-context (lv I) (equal? (not (term (I-in I lv))) 
-					   (term (I-out I lv))))
-
-(test-equal #f (term (I-out (x y x) x)))
-(test-equal #f (term (I-out (x y x) y)))
-(test-equal #f (term (I-out (x y x) x)))
-(test-equal #t (term (I-out (x y z) w)))
-
-'I-cons
-(define-metafunction
-  patina-context
-  I-cons : I lv -> I
-  [(I-cons I lv) 
-   ,(cons (term lv) (term I))
-   (side-condition (term (I-out I lv)))]
-  [(I-cons I lv)
-   I
-   (side-condition (term (I-in I lv)))])
-
-(test-equal '(x) (term (I-cons () x)))
-(test-equal '(x) (term (I-cons (x) x)))
-
-; I-cons => I-in
-(redex-check patina-context (lv I) (term (I-in (I-cons I lv) lv)))
-
-'I-del
-(define-metafunction
-  patina-context
-  I-del : I lv -> I
-  [(I-del (lv_0 lv_1 ...) lv_0)
-   (lv_1 ...)
+;; initialize a path
+(define-judgment-form patina-checked
+  #:mode (Δ↑ I I O)
+  #:contract (Δ↑ Δ lv Δ)
+  [------------------------------------------------------------------------------------------- "Δ↑ present"
+   (Δ↑ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0 ((lv_s ι_s) ... (lv_0 ⊤) (lv_e ι_e) ...))
    ]
-  [(I-del (lv_0 lv_1 ...) lv_2)
-   (lv_0 lv_3 ...)
-   (where (lv_3 ...) (I-del (lv_1 ...) lv_2))
-   ])
-
-(test-equal '() (term (I-del (x) x)))
-(test-equal '(x) (term (I-del (x y) y)))
-
-; I-in (I-del (I-cons I)) = I-in I
-;(redex-check patina-context #:satisfying (I-out I lv) 
-  ;(term (I-out (I-del (I-cons I lv) lv) lv)))
-
-'I-⊆
-(define-relation
-  patina-context
-  I-⊆ ⊆ I × I
-  [(I-⊆ () I)]
-  [(I-⊆ (lv_0 lv_1 ...) I_1)
-   (I-in I_1 lv_0) ; make sure lv_0 is in I_1 ...
-   (I-⊆ (lv_1 ...) (I-del I_1 lv_0)) ; ... remove lv_0 from I_1 and recurse
+  [(side-condition (not (member (map caar (term Δ)))))
+   --------------------------------------------------- "Δ↑ new"
+   (Δ↑ Δ lv ,(cons (term (lv ⊤)) (term Δ)))
    ]
   )
 
-(test-equal #t (term (I-⊆ () ())))
-(test-equal #t (term (I-⊆ () (x y))))
-(test-equal #f (term (I-⊆ (x) ())))
-(test-equal #t (term (I-⊆ (x) (y x))))
-(test-equal #t (term (I-⊆ (x y) (y x))))
-(test-equal #f (term (I-⊆ (z) (x))))
-
-'τ-lv
-(define-judgment-form 
- patina-context
- #:mode (τ-lv I I O)
- #:contract (τ-lv Γ lv τ)
- [(Γ-in Γ x) (where τ (Γ-get Γ x))
-  -------------------------------- "τ-lv-var"
-  (τ-lv Γ x τ)
-  ]
- )
-
-(test-equal
- (judgment-holds 
-   (τ-lv ((y int) (x int) (z int)) x τ)
-   τ) 
- '(int))
-(test-equal
- (judgment-holds 
-   (τ-lv ((y int) (z int)) x τ)
-   τ) 
- '())
-(test-equal
-  (judgment-holds
-    (τ-lv () x τ)
-    τ)
-  '())
-
-'τ-rv
-(define-judgment-form 
- patina-context
- #:mode (τ-rv I I I O O)
- #:contract (τ-rv Γ I rv τ I)
- [------------------ "τ-rv-ℤ"
-  (τ-rv Γ I ℤ int I)
-  ]
- [(τ-lv Γ lv_0 int) (τ-lv Γ lv_1 int) 
-  (I-in I lv_0) (I-in I lv_1)
-  ----------------------------------- "τ-rv-+"
-  (τ-rv Γ I (lv_0 + lv_1) int I)
-  ]
- )
-
-(test-equal
- (judgment-holds
-   (τ-rv () () 0 τ I)
-   (τ I))
- '((int ())))
-(test-equal
- (judgment-holds
-   (τ-rv ((x int) (y int)) (x y) (x + y) τ I)
-   (τ I))
- '((int (x y))))
-(test-equal
- (judgment-holds
-   (τ-rv ((x int) (y int)) (y x) (x + y) τ I)
-   (τ I))
- '((int (y x))))
-(test-equal
- (judgment-holds
-   (τ-rv ((x int) (y int)) (y) (x + y) τ I)
-   (τ I))
- '())
-
-; addition preserves initialization
-(redex-check patina-context (x_0 x_1)
-  (equal? (judgment-holds 
-	    (τ-rv ((x_0 int) (x_1 int)) 
-		  (x_0 x_1) 
-		  (x_0 + x_1) 
-		  τ I) 
-	    (τ I))
-	  `((int ,(term (x_0 x_1))))))
-
-'τ-st
-(define-judgment-form
-  patina-context
-  #:mode (τ-st I I I O)
-  #:contract (τ-st Γ I st I)
-  [(τ-lv Γ lv τ_0) 
-   (τ-rv Γ I_0 rv τ_0 I_1) 
-   (where I_2 (I-cons I_1 lv))
-   --------------------------- "τ-st-="
-   (τ-st Γ I_0 (lv = rv) I_2)
+;; uninitialize a path
+(define-judgment-form patina-checked
+  #:mode (Δ↓ I I O)
+  #:contract (Δ↓ Δ lv Δ)
+  [------------------------------------------------------------------------------------------- "Δ↓ present"
+   (Δ↓ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0 ((lv_s ι_s) ... (lv_0 ⊥) (lv_e ι_e) ...))
    ]
-  [(where I_1 (I-del I_0 lv))
-   ; TODO make sure there are no initialized subpaths
-   ---------------------------- "τ-st-delete"
-   (τ-st Γ I_0 (delete lv) I_1)
-   ]
-  [(τ-blk Γ I_O blk I_1)
-   --------------------- "τ-st-block"
-   (τ-st Γ I_O blk I_1)
+  [(side-condition (not (member (map caar (term Δ)))))
+   --------------------------------------------------- "Δ↓ new"
+   (Δ↓ Δ lv ,(cons (term (lv ⊥)) (term Δ)))
    ]
   )
 
-; a helper judgment for τ-blk
-'τ-sts
-(define-judgment-form
-  patina-context
-  #:mode (τ-sts I I I O)
-  #:contract (τ-sts Γ I (st ...) I)
-  [---------------- "τ-sts-nil"
-   (τ-sts Γ I () I)
+;; path fully initialized (all subpaths initialized)
+(define-judgment-form patina-checked
+  #:mode (lv⇑ I I I)
+  #:contract (lv⇑ Γ Δ lv)
+  [(lv⊢ Γ lv int) (Δ= Δ lv ⊤)
+   -------------------------- "lv⇑ int"
+         (lv⇑ Γ Δ lv)
    ]
-  [(τ-st Γ I_0 st_0 I_1) 
-   (τ-sts Γ I_1 (st_1 ...) I_n)
-   --------------------------------- "τ-sts-cons"
-   (τ-sts Γ I_0 (st_0 st_1 ...) I_n)
+  [(lv⊢ Γ lv (~ τ)) (Δ= Δ lv ⊤) (lv⇑ Γ Δ (* lv))
+   --------------------------------------------- "lv⇑ ~τ"
+                    (lv⇑ Γ Δ lv)
    ]
   )
 
-'τ-blk
-(define-judgment-form
-  patina-context
-  #:mode (τ-blk I I I O)
-  #:contract (τ-blk Γ I blk I)
-  [(τ-sts (Γ-extend Γ (vd ...)) I_0 (st ...) I_1)
-   (I-⊆ I_1 I_0) ; may have deinitialized variables from I_0, but didn't initialize any new ones
-   ------------------------------------------------- "τ-blk"
-   (τ-blk Γ I_0 (block (vd ...) (st ...)) I_1)
+;; path fully uninitialized (all subpaths uninitialized)
+(define-judgment-form patina-checked
+  #:mode (lv⇓ I I I)
+  #:contract (lv⇓ Γ Δ lv)
+  [(lv⊢ Γ lv int) (Δ= Δ lv ⊥)
+   -------------------------- "lv⇓ int"
+        (lv⇓ Γ Δ lv)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (Δ= Δ lv ⊥) (lv⇓ Γ Δ (* lv))
+   --------------------------------------------- "lv⇓ ~τ"
+                    (lv⇓ Γ Δ lv)
    ]
   )
 
-(test-equal
-  (judgment-holds
-    (τ-st ((x int)) (x) (x = 1) I)
-    I)
-  '((x)))
-(test-equal
-  (judgment-holds
-    (τ-st ((x int)) (x) (delete x) I)
-    I)
-  '(()))
-(test-equal
-  (judgment-holds
-    (τ-st ((x int)) (x) (block () ((x = 1) (x = 2))) I)
-    I)
-  '((x)))
-(test-equal
-  (judgment-holds
-    (τ-blk ((x int)) (x) (block () ((x = 1) (x = 2))) I)
-    I)
-  '((x)))
-(test-equal
-  (judgment-holds
-    (τ-blk () () (block ((x : int)) ((x = 1) (delete x))) I)
-    I)
-  '(()))
-(test-equal
-  (judgment-holds
-    (τ-blk ((x int)) (x) (block () ((delete x))) I)
-    I)
-  '(()))
-; fails because x was not deleted
-(test-equal
-  (judgment-holds
-    (τ-blk () () (block ((x : int)) ((x = 1))) I)
-    I)
-  '())
+;; all subpaths uninitialized, but path may or may not be initialized
+(define-judgment-form patina-checked
+  #:mode (lv↓ I I I)
+  #:contract (lv↓ Γ Δ lv)
+  [(lv⇓ Γ ((lv_s ι_s) ... (lv_0 ⊥) (lv_e ι_e) ...) lv_0)
+   ----------------------------------------------------- "lv↓ present"
+   (lv↓ Γ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0)
+   ]
+  )
+
+;; fully initialize a path
+(define-judgment-form patina-checked
+  #:mode (lv⇑⇑ I I I O)
+  #:contract (lv⇑⇑ Γ Δ lv Δ)
+  [(lv⊢ Γ lv int) (Δ↑ Δ_0 lv Δ_1)
+   ------------------------------ "lv⇑⇑ int"
+        (lv⇑⇑ Γ Δ_0 lv Δ_1)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (lv⇑⇑ Γ Δ_0 (* lv) Δ_1) (Δ↑ Δ_1 lv Δ_2)
+   -------------------------------------------------------- "lv⇑⇑ ~τ"
+                       (lv⇑⇑ Γ Δ_0 lv Δ_2)
+   ]
+  )
+
+;; fully uninitialize a path
+(define-judgment-form patina-checked
+  #:mode (lv⇓⇓ I I I O)
+  #:contract (lv⇓⇓ Γ Δ lv Δ)
+  [(lv⊢ Γ lv int) (Δ↓ Δ_0 lv Δ_1)
+   ------------------------------ "lv⇓⇓ int"
+        (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (lv⇓⇓ Γ Δ_0 (* lv) Δ_1) (Δ↓ Δ_1 lv Δ_2)
+   -------------------------------------------------------- "lv⇓⇓ ~τ"
+                       (lv⇓⇓ Γ Δ_0 lv Δ_2)
+   ]
+  )
+
+;; typechecking for paths. makes sure a path will be allocated, but not necessarily initialized
+(define-judgment-form patina-checked
+  #:mode (lv⊢ I I O)
+  #:contract (lv⊢ Γ lv τ)
+  [(Γ= Γ x τ)
+   ----------- "lv⊢ var"
+   (lv⊢ Γ x τ)
+   ]
+  [(lv⊢ Γ lv (~ τ))
+   ---------------- "lv⊢ owned"
+   (lv⊢ Γ (* lv) τ)
+   ]
+  )
+
+(test-equal '(int) (judgment-holds (lv⊢ ((x (~ (~ int)))) (* (* x)) τ) τ))
+(test-equal #f (judgment-holds (lv⊢ ((x int)) (* x) τ)))
+
+;; evaluate a path down to the address it refers to
+(define-judgment-form patina-machine
+  #:mode (lv-> I I I I O)
+  #:contract(lv-> Γ V μ lv α)
+  [  (V= V x α)
+   ---------------- "lv-> var"
+   (lv-> Γ V μ x α)
+   ]
+  [(lv-> Γ V μ lv α_1) (μ= μ α_1 α_0)
+   ----------------------------------- "lv-> deref"
+         (lv-> Γ V μ (* lv) α_0)
+   ]
+  )
+
+(test-equal '((0 0)) (judgment-holds
+                     (lv-> ((x (~ (~ int)))) 
+                           ((x (2 0)))
+                           (((0 0) ⊥) ((1 0) (0 0)) ((2 0) (1 0)))
+                           (* (* x))
+                           α)
+                     α))
+
+;; typechecking for expressions. tracks initialization of paths
+(define-judgment-form patina-checked
+  #:mode (rv⊢ I I I I O O)
+  #:contract (rv⊢ Γ Δ Σ rv τ Δ)
+  [------------------- "rv⊢ int"
+   (rv⊢ Γ Δ Σ z int Δ)
+   ]
+  [(lv⊢ Γ lv_1 int) (lv⇑ Γ Δ lv_1)
+   (lv⊢ Γ lv_2 int) (lv⇑ Γ Δ lv_2)
+   ------------------------------- "rv⊢ plus"
+   (rv⊢ Γ Δ Σ (lv_1 + lv_2) int Δ)
+   ]
+  [(lv⊢ Γ lv τ) (lv⇑ Γ Δ_0 lv) (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   ----------------------------------------------- "rv⊢ lv"
+              (rv⊢ Γ Δ_0 Σ lv τ Δ_1)
+   ]
+  [(lv⊢ Γ lv τ) (lv⇑ Γ Δ_0 lv) (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   ----------------------------------------------- "rv⊢ new"
+           (rv⊢ Γ Δ_0 Σ (new lv) (~ τ) Δ_1)
+   ]
+  )
+
+;; evaluate an expression and store the result at the provided address
+(define-judgment-form patina-machine
+  #:mode (rv-> I I I I I O)
+  #:contract (rv-> Γ V μ α rv μ)
+  [(μ<- μ α z μ_1)
+   -------------------- "rv-> int"
+   (rv-> Γ V μ α z μ_1)
+   ]
+  [(lv-> Γ V μ lv_1 α_1) (μ= μ α_1 z_1)
+   (lv-> Γ V μ lv_2 α_2) (μ= μ α_2 z_2)
+   (μ<- μ α ,(+ (term z_1) (term z_2)) μ_1)
+   ---------------------------------------- "rv-> plus"
+   (rv-> Γ V μ α (lv_1 + lv_2) μ_1)
+   ]
+  [(lv-> Γ V μ lv α_1) (lv⊢ Γ lv τ) (μ-> μ α_1 τ α μ_1)
+   ---------------------------------------------------- "rv-> lv"
+                 (rv-> Γ V μ α lv μ_1)
+   ]
+  [(lv-> Γ V μ lv α_1) (lv⊢ Γ lv τ)
+   (μ+ μ τ α_2 μ_1) (μ-> μ_1 α_1 τ α_2 μ_2)
+   (μ<- μ_2 α α_2 μ_3)
+   ---------------------------------------- "rv-> new"
+   (rv-> Γ V μ α (new lv) μ_3)
+   ]
+  )
+
+(test-equal (judgment-holds (rv-> ((x int)) ((x (0 0))) (((0 0) 1) ((1 0) ⊥)) (1 0) (x + x) μ) μ)
+            '((((0 0) 1) ((1 0) 2))))
+(test-equal (judgment-holds (rv-> ((x int)) ((x (0 0))) (((0 0) 1) ((1 0) ⊥)) (1 0) x μ) μ)
+            '((((0 0) ⊥) ((1 0) 1))))
+(test-equal (judgment-holds (rv-> ((x int) (y (~ int))) ((x (0 0)) (y (1 0))) 
+                                  (((0 0) 1) ((1 0) ⊥)) (1 0) (new x) μ) μ)
+            '((((0 0) ⊥) ((1 0) (2 0)) ((2 0) 1))))
+
+;; typechecking for statements
+(define-judgment-form patina-checked
+  #:mode (s⊢ I I I I O)
+  #:contract (s⊢ Γ Δ Σ s Δ)
+  [--------------- "s⊢ skip"
+   (s⊢ Γ Δ Σ () Δ)
+   ]
+  [(s⊢ Γ Δ_0 Σ s_1 Δ_1) (s⊢ Γ Δ_1 Σ (s_2 ...) Δ_2)
+  ------------------------------------------------ "s⊢ seq"
+         (s⊢ Γ Δ_0 Σ (s_1 s_2 ...) Δ_2)
+   ]
+  [(where Γ_1 ,(cons (term (x τ)) (term Γ_0)))
+   (lv⇓⇓ Γ_1 Δ_0 x Δ_1)
+   (s⊢ Γ_1 Δ_1 Σ (block (vd_0 ...) s ()) Δ_2)
+   (lv⇓ Γ_1 Δ_2 x)
+   ---------------------------------------------------------- "s⊢ block alloc"
+   (s⊢ Γ_0 Δ_0 Σ (block ((x : τ) vd_0 ...) s ()) Δ_2)
+   ]
+  [          (s⊢ Γ Δ_0 Σ s Δ_1)   
+   -------------------------------------- "s⊢ block"
+   (s⊢ Γ Δ_0 Σ (block () s ()) Δ_1)
+   ]
+  [(lv⊢ Γ lv τ)
+   (lv↓ Γ Δ_0 lv)
+   (rv⊢ Γ Δ_0 Σ rv τ Δ_1)
+   (lv⇑⇑ Γ Δ_1 lv Δ_2)
+   -------------------------- "s⊢ assign"
+   (s⊢ Γ Δ_0 Σ (lv = rv) Δ_2)
+   ]
+  [(lv⊢ Γ lv τ)
+   (lv↓ Γ Δ_0 lv)
+   (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   ------------------------- "s⊢ delete"
+   (s⊢ Γ Δ_0 Σ (delete lv) Δ_1)
+   ]
+  )
+
+;; small-step evaluation for statements
+(define-judgment-form patina-machine
+  #:mode (s-> I I I I O O O O)
+  #:contract (s-> Γ V μ s Γ V μ s)
+  [------------------------------------ "s-> seq skip"
+   (s-> Γ V μ (() s ...) Γ V μ (s ...))
+   ]
+  [         (s-> Γ_0 V_0 μ_0 s_0 Γ_1 V_1 μ_1 s_1)
+   --------------------------------------------------------- "s-> seq step"
+   (s-> Γ_0 V_0 μ_0 (s_0 s_2 ...) Γ_1 V_1 μ_1 (s_1 s_2 ...))
+   ]
+  [------------------------------------- "s-> block skip"
+   (s-> Γ V μ (block () () ()) Γ V μ ())
+   ]
+  [                  (s-> Γ_0 V_0 μ_0 s_0 Γ_1 V_1 μ_1 s_1)
+   ----------------------------------------------------------------------------- "s-> block step"
+   (s-> Γ_0 V_0 μ_0 (block () s_0 (vd ...)) Γ_1 V_1 μ_1 (block () s_1 (vd ...)))
+   ]
+  [  (μ+ μ_0 τ α μ_1) (where Γ_1 ,(cons (term (x τ)) (term Γ_0))) (where V_1 ,(cons (term (x α)) (term V_0)))
+   ------------------------------------------------------------------------------------------------------------- "s-> block alloc"
+   (s-> Γ_0 V_0 μ_0 (block ((x : τ) vd_0 ...) s (vd_1 ...)) Γ_1 V_1 μ_1 (block (vd_0 ...) s ((x : τ) vd_1 ...)))
+   ]
+  [(where ((x_s τ_s) ... (x τ) (x_e τ_e) ...) Γ_0)
+   (where ((x_s α_s) ... (x α) (x_e α_e) ...) V_0)
+   (μ- μ_0 τ α μ_1)
+   (where Γ_1 ((x_s τ_s) ... (x_e τ_e) ...))
+   (where V_1 ((x_s α_s) ... (x_e α_e) ...))
+   ----------------------------------------------------------------------------------- "s-> block free"
+   (s-> Γ_0 V_0 μ_0 (block () () ((x : τ) vd ...)) Γ_1 V_1 μ_1 (block () () (vd ...)))
+   ]
+  [(lv-> Γ V μ_0 lv α)
+   (rv-> Γ V μ_0 α rv μ_1)
+   ---------------------------------- "s-> assignment"
+   (s-> Γ V μ_0 (lv = rv) Γ V μ_1 ())
+   ]
+  [------------------------------- "s-> delete variable"
+   (s-> Γ V μ (delete x) Γ V μ ())
+   ]
+  [(lv⊢ Γ lv (~ τ))
+   (lv-> Γ V μ_0 (* lv) α)
+   (μ- μ_0 τ α μ_1)
+   ---------------------------------------- "s-> delete owned pointer"
+   (s-> Γ V μ_0 (delete (* lv)) Γ V μ_1 ())
+   ]
+  )
+
+(define patina-step
+  (reduction-relation patina-machine
+    [--> (Γ_0 V_0 μ_0 s_0)
+         (Γ_1 V_1 μ_1 s_1)
+         (judgment-holds (s-> Γ_0 V_0 μ_0 s_0 Γ_1 V_1 μ_1 s_1))]))
+
+;(judgment-holds
+  ;(s⊢ () () ()
+    ;(block ((x : int) (y : (~ int)) (z : int)) 
+           ;((x = 1) 
+            ;(y = (new x))
+            ;(z = (* y))
+            ;((* y) = z) 
+            ;(delete (* y))
+            ;) 
+           ;())
+    ;Δ))
+
+;(apply-reduction-relation* patina-step
+  ;(term  (() () ()
+    ;(block ((x : int) (y : (~ int)) (z : int)) 
+           ;((x = 1) 
+            ;(y = (new x))
+            ;(z = (* y))
+            ;((* y) = z) 
+            ;(delete (* y))
+            ;) 
+           ;()))))
 
 (test-results)
