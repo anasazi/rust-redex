@@ -93,10 +93,10 @@
 (define-judgment-form patina-machine
   #:mode (sizeof I O)
   #:contract (sizeof τ n)
-  [----------- "sizeof int"
+  [-------------- "sizeof int"
    (sizeof int 1)
    ]
-  [------------- "sizeof ~τ"
+  [---------------- "sizeof ~τ"
    (sizeof (~ τ) 1)
    ]
   )
@@ -137,7 +137,7 @@
 (define-judgment-form patina-machine
   #:mode (μ= I I O)
   #:contract (μ= μ α v)
-  [--------------------------------------------- "μ="
+  [-------------------------------------------- "μ="
    (μ= ((α_s _) ... (α_0 v) (α_e _) ...) α_0 v)
    ]
   )
@@ -169,7 +169,7 @@
    (α+ α_s n_off α_s0) ...
    (α+ α_d n_off α_d0) ...
    (μ->helper μ_0 (α_s0 ...) (α_d0 ...) μ_1)
-   ---------------------------------------------- "μ->"
+   ----------------------------------------- "μ->"
    (μ-> μ_0 α_s τ α_d μ_1)
    ]
   )
@@ -194,7 +194,7 @@
 (define-judgment-form patina-machine
   #:mode (V= I I O)
   #:contract (V= V x α)
-  [--------------------------------------------- "V="
+  [-------------------------------------------- "V="
    (V= ((x_s _) ... (x_0 α) (x_e _) ...) x_0 α)
    ]
   )
@@ -205,7 +205,7 @@
 (define-judgment-form patina-machine
   #:mode (Γ= I I O)
   #:contract (Γ= Γ x τ)
-  [--------------------------------------------- "Γ="
+  [-------------------------------------------- "Γ="
    (Γ= ((x_s _) ... (x_0 τ) (x_e _) ...) x_0 τ)
    ]
   )
@@ -261,7 +261,7 @@
    (Δ↑ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0 ((lv_s ι_s) ... (lv_0 ⊤) (lv_e ι_e) ...))
    ]
   [ (Δ? Δ lv)
-   --------------------------------------------------- "Δ↑ new"
+   ---------------------------------------- "Δ↑ new"
    (Δ↑ Δ lv ,(cons (term (lv ⊤)) (term Δ)))
    ]
   )
@@ -278,7 +278,7 @@
    (Δ↓ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0 ((lv_s ι_s) ... (lv_0 ⊥) (lv_e ι_e) ...))
    ]
   [(Δ? Δ lv)
-   --------------------------------------------------- "Δ↓ new"
+   ---------------------------------------- "Δ↓ new"
    (Δ↓ Δ lv ,(cons (term (lv ⊥)) (term Δ)))
    ]
   )
@@ -491,7 +491,7 @@
             '((((0 0) ⊥) ((1 0) (2 0)) ((2 0) 1))))
 
 ;; typechecking for statements
-; TODO remove paths from Δ when they are freed
+; TODO maybe remove variables and their subpaths from Δ when they are freed
 (define-judgment-form patina-checked
   #:mode (s⊢ I I I I O)
   #:contract (s⊢ Γ Δ Σ s Δ)
@@ -505,13 +505,12 @@
   [(where Γ_1 ,(cons (term (x τ)) (term Γ_0)))
    (lv⇓⇓ Γ_1 Δ_0 x Δ_1)
    (s⊢ Γ_1 Δ_1 Σ (block (vd_0 ...) s ()) Δ_2)
-   ;(lv⇓ Γ_1 Δ_2 x)
-   (lv↓ Γ_1 Δ_2 x)
-   ---------------------------------------------------------- "s⊢ block alloc"
+   (lv↓ Γ_1 Δ_2 x) ; don't need to delete stack variables as long as their contents have been freed
+   -------------------------------------------------- "s⊢ block alloc"
    (s⊢ Γ_0 Δ_0 Σ (block ((x : τ) vd_0 ...) s ()) Δ_2)
    ]
   [          (s⊢ Γ Δ_0 Σ s Δ_1)   
-   -------------------------------------- "s⊢ block"
+   -------------------------------- "s⊢ block"
    (s⊢ Γ Δ_0 Σ (block () s ()) Δ_1)
    ]
   [(lv⊢ Γ lv τ)
@@ -525,7 +524,7 @@
    (lv↓ Γ Δ_0 lv) ; subpaths are uninitialized
    (Δ= Δ_0 lv ⊤) ; but the path is initialized (prevents double/unnecessary deletes)
    (lv⇓⇓ Γ Δ_0 lv Δ_1)
-   ------------------------- "s⊢ delete"
+   ---------------------------- "s⊢ delete"
    (s⊢ Γ Δ_0 Σ (delete lv) Δ_1)
    ]
   )
