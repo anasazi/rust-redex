@@ -131,6 +131,8 @@
    ]
   )
 
+(test-equal '((((0 0) 1))) (judgment-holds (μ<- (((0 0) ⊥)) (0 0) 1 μ) μ))
+
 ;; lookup address in memory to get value
 (define-judgment-form patina-machine
   #:mode (μ= I I O)
@@ -139,6 +141,8 @@
    (μ= ((α_s _) ... (α_0 v) (α_e _) ...) α_0 v)
    ]
   )
+
+(test-equal '(1) (judgment-holds (μ= (((0 0) 1)) (0 0) v) v))
 
 ;; move helper - thread the heap through moving a value on a sequence of addresses
 (define-judgment-form patina-machine
@@ -170,6 +174,8 @@
    ]
   )
 
+(test-equal '((((0 0) ⊥) ((1 0) 1))) (judgment-holds (μ-> (((0 0) 1) ((1 0) ⊥)) (0 0) int (1 0) μ) μ))
+
 ;; free space for a type from an address
 (define-judgment-form patina-machine
   #:mode (μ- I I I O)
@@ -182,6 +188,8 @@
    ]
   )
 
+(test-equal '(()) (judgment-holds (μ- (((0 0) 1)) int (0 0) μ) μ))
+
 ;; lookup variable in map to get address
 (define-judgment-form patina-machine
   #:mode (V= I I O)
@@ -191,6 +199,8 @@
    ]
   )
 
+(test-equal '((0 0)) (judgment-holds (V= ((x (0 0))) x α) α))
+
 ;; lookup type of a variable
 (define-judgment-form patina-machine
   #:mode (Γ= I I O)
@@ -199,6 +209,8 @@
    (Γ= ((x_s _) ... (x_0 τ) (x_e _) ...) x_0 τ)
    ]
   )
+
+(test-equal '(int) (judgment-holds (Γ= ((x int)) x τ) τ))
 
 ;;;; TYPING
 (define-extended-language patina-checked patina-machine
@@ -221,6 +233,26 @@
    ]
   )
 
+(test-equal '(⊤) (judgment-holds (Δ= ((x ⊤)) x ι) ι))
+
+;; path initialization unspecified
+(define-judgment-form patina-checked
+  #:mode (Δ? I I)
+  #:contract (Δ? Δ lv)
+  [---------- "Δ? empty"
+   (Δ? () lv)
+   ]
+  [(Δ? ((lv_1 ι_1) ...) lv_2)
+   (where (lv_!_0 lv_!_0) (lv_0 lv_2))
+   ----------------------------------- "Δ? cons"
+   (Δ? ((lv_0 _) (lv_1 ι_1) ...) lv_2)
+   ]
+  )
+
+(test-equal #f (judgment-holds (Δ? ((x ⊤) (y ⊥)) x)))
+(test-equal #f (judgment-holds (Δ? ((x ⊤) (y ⊥)) y)))
+(test-equal #t (judgment-holds (Δ? ((x ⊤) (y ⊥)) z)))
+
 ;; initialize a path
 (define-judgment-form patina-checked
   #:mode (Δ↑ I I O)
@@ -228,11 +260,15 @@
   [------------------------------------------------------------------------------------------- "Δ↑ present"
    (Δ↑ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0 ((lv_s ι_s) ... (lv_0 ⊤) (lv_e ι_e) ...))
    ]
-  [(side-condition (not (member (map caar (term Δ)))))
+  [ (Δ? Δ lv)
    --------------------------------------------------- "Δ↑ new"
    (Δ↑ Δ lv ,(cons (term (lv ⊤)) (term Δ)))
    ]
   )
+
+(test-equal '(((x ⊤) (y ⊤))) (judgment-holds (Δ↑ ((x ⊥) (y ⊤)) x Δ) Δ))
+(test-equal '(((x ⊤) (y ⊤))) (judgment-holds (Δ↑ ((x ⊤) (y ⊤)) x Δ) Δ))
+(test-equal '(((x ⊤) (y ⊤))) (judgment-holds (Δ↑ ((y ⊤)) x Δ) Δ))
 
 ;; uninitialize a path
 (define-judgment-form patina-checked
@@ -241,77 +277,15 @@
   [------------------------------------------------------------------------------------------- "Δ↓ present"
    (Δ↓ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0 ((lv_s ι_s) ... (lv_0 ⊥) (lv_e ι_e) ...))
    ]
-  [(side-condition (not (member (map caar (term Δ)))))
+  [(Δ? Δ lv)
    --------------------------------------------------- "Δ↓ new"
    (Δ↓ Δ lv ,(cons (term (lv ⊥)) (term Δ)))
    ]
   )
 
-;; path fully initialized (all subpaths initialized)
-(define-judgment-form patina-checked
-  #:mode (lv⇑ I I I)
-  #:contract (lv⇑ Γ Δ lv)
-  [(lv⊢ Γ lv int) (Δ= Δ lv ⊤)
-   -------------------------- "lv⇑ int"
-         (lv⇑ Γ Δ lv)
-   ]
-  [(lv⊢ Γ lv (~ τ)) (Δ= Δ lv ⊤) (lv⇑ Γ Δ (* lv))
-   --------------------------------------------- "lv⇑ ~τ"
-                    (lv⇑ Γ Δ lv)
-   ]
-  )
-
-;; path fully uninitialized (all subpaths uninitialized)
-(define-judgment-form patina-checked
-  #:mode (lv⇓ I I I)
-  #:contract (lv⇓ Γ Δ lv)
-  [(lv⊢ Γ lv int) (Δ= Δ lv ⊥)
-   -------------------------- "lv⇓ int"
-        (lv⇓ Γ Δ lv)
-   ]
-  [(lv⊢ Γ lv (~ τ)) (Δ= Δ lv ⊥) (lv⇓ Γ Δ (* lv))
-   --------------------------------------------- "lv⇓ ~τ"
-                    (lv⇓ Γ Δ lv)
-   ]
-  )
-
-;; all subpaths uninitialized, but path may or may not be initialized
-(define-judgment-form patina-checked
-  #:mode (lv↓ I I I)
-  #:contract (lv↓ Γ Δ lv)
-  [(lv⇓ Γ ((lv_s ι_s) ... (lv_0 ⊥) (lv_e ι_e) ...) lv_0)
-   ----------------------------------------------------- "lv↓ present"
-   (lv↓ Γ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0)
-   ]
-  )
-
-;; fully initialize a path
-(define-judgment-form patina-checked
-  #:mode (lv⇑⇑ I I I O)
-  #:contract (lv⇑⇑ Γ Δ lv Δ)
-  [(lv⊢ Γ lv int) (Δ↑ Δ_0 lv Δ_1)
-   ------------------------------ "lv⇑⇑ int"
-        (lv⇑⇑ Γ Δ_0 lv Δ_1)
-   ]
-  [(lv⊢ Γ lv (~ τ)) (lv⇑⇑ Γ Δ_0 (* lv) Δ_1) (Δ↑ Δ_1 lv Δ_2)
-   -------------------------------------------------------- "lv⇑⇑ ~τ"
-                       (lv⇑⇑ Γ Δ_0 lv Δ_2)
-   ]
-  )
-
-;; fully uninitialize a path
-(define-judgment-form patina-checked
-  #:mode (lv⇓⇓ I I I O)
-  #:contract (lv⇓⇓ Γ Δ lv Δ)
-  [(lv⊢ Γ lv int) (Δ↓ Δ_0 lv Δ_1)
-   ------------------------------ "lv⇓⇓ int"
-        (lv⇓⇓ Γ Δ_0 lv Δ_1)
-   ]
-  [(lv⊢ Γ lv (~ τ)) (lv⇓⇓ Γ Δ_0 (* lv) Δ_1) (Δ↓ Δ_1 lv Δ_2)
-   -------------------------------------------------------- "lv⇓⇓ ~τ"
-                       (lv⇓⇓ Γ Δ_0 lv Δ_2)
-   ]
-  )
+(test-equal '(((x ⊥) (y ⊤))) (judgment-holds (Δ↓ ((x ⊥) (y ⊤)) x Δ) Δ))
+(test-equal '(((x ⊥) (y ⊤))) (judgment-holds (Δ↓ ((x ⊤) (y ⊤)) x Δ) Δ))
+(test-equal '(((x ⊥) (y ⊤))) (judgment-holds (Δ↓ ((y ⊤)) x Δ) Δ))
 
 ;; typechecking for paths. makes sure a path will be allocated, but not necessarily initialized
 (define-judgment-form patina-checked
@@ -329,6 +303,108 @@
 
 (test-equal '(int) (judgment-holds (lv⊢ ((x (~ (~ int)))) (* (* x)) τ) τ))
 (test-equal #f (judgment-holds (lv⊢ ((x int)) (* x) τ)))
+
+;; path fully initialized (all subpaths initialized)
+(define-judgment-form patina-checked
+  #:mode (lv⇑ I I I)
+  #:contract (lv⇑ Γ Δ lv)
+  [(lv⊢ Γ lv int) (Δ= Δ lv ⊤)
+   -------------------------- "lv⇑ int"
+         (lv⇑ Γ Δ lv)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (Δ= Δ lv ⊤) (lv⇑ Γ Δ (* lv))
+   --------------------------------------------- "lv⇑ ~τ"
+                    (lv⇑ Γ Δ lv)
+   ]
+  )
+
+(test-equal #t (judgment-holds (lv⇑ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) x)))
+(test-equal #f (judgment-holds (lv⇑ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) y)))
+(test-equal #f (judgment-holds (lv⇑ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) (* y))))
+
+;; path fully uninitialized (all subpaths uninitialized)
+(define-judgment-form patina-checked
+  #:mode (lv⇓ I I I)
+  #:contract (lv⇓ Γ Δ lv)
+  [(lv⊢ Γ lv int) (Δ= Δ lv ⊥)
+   -------------------------- "lv⇓ int"
+        (lv⇓ Γ Δ lv)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (Δ= Δ lv ⊥) (lv⇓ Γ Δ (* lv))
+   --------------------------------------------- "lv⇓ ~τ"
+                    (lv⇓ Γ Δ lv)
+   ]
+  )
+
+(test-equal #f (judgment-holds (lv⇓ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) x)))
+(test-equal #f (judgment-holds (lv⇓ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) y)))
+(test-equal #t (judgment-holds (lv⇓ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) (* y))))
+(test-equal #t (judgment-holds (lv⇓ ((x int) (y (~ int))) ((x ⊤) (y ⊥) ((* y) ⊥)) y)))
+
+;; all subpaths uninitialized, but path may or may not be initialized
+(define-judgment-form patina-checked
+  #:mode (lv↓ I I I)
+  #:contract (lv↓ Γ Δ lv)
+  [(lv⇓ Γ ((lv_s ι_s) ... (lv_0 ⊥) (lv_e ι_e) ...) lv_0)
+   ----------------------------------------------------- "lv↓ present"
+   (lv↓ Γ ((lv_s ι_s) ... (lv_0 _) (lv_e ι_e) ...) lv_0)
+   ]
+  )
+
+(test-equal #t (judgment-holds (lv↓ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) x)))
+(test-equal #t (judgment-holds (lv↓ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) y)))
+(test-equal #t (judgment-holds (lv↓ ((x int) (y (~ int))) ((x ⊤) (y ⊤) ((* y) ⊥)) (* y))))
+(test-equal #t (judgment-holds (lv↓ ((x int) (y (~ int))) ((x ⊤) (y ⊥) ((* y) ⊥)) y)))
+
+;; fully initialize a path
+(define-judgment-form patina-checked
+  #:mode (lv⇑⇑ I I I O)
+  #:contract (lv⇑⇑ Γ Δ lv Δ)
+  [(lv⊢ Γ lv int) (Δ↑ Δ_0 lv Δ_1)
+   ------------------------------ "lv⇑⇑ int"
+        (lv⇑⇑ Γ Δ_0 lv Δ_1)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (lv⇑⇑ Γ Δ_0 (* lv) Δ_1) (Δ↑ Δ_1 lv Δ_2)
+   -------------------------------------------------------- "lv⇑⇑ ~τ"
+                       (lv⇑⇑ Γ Δ_0 lv Δ_2)
+   ]
+  )
+
+(test-equal '(((x ⊤))) (judgment-holds (lv⇑⇑ ((x int)) () x Δ) Δ))
+(test-equal '(((x ⊤))) (judgment-holds (lv⇑⇑ ((x int)) ((x ⊤)) x Δ) Δ))
+(test-equal '(((x ⊤))) (judgment-holds (lv⇑⇑ ((x int)) ((x ⊥)) x Δ) Δ))
+(test-equal '(((x ⊤) ((* x) ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) () x Δ) Δ))
+(test-equal '((((* x) ⊤) (x ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) ((x ⊤)) x Δ) Δ))
+(test-equal '(((x ⊤) ((* x) ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) ((x ⊤) ((* x) ⊤)) x Δ) Δ))
+(test-equal '(((x ⊤) ((* x) ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) ((x ⊤) ((* x) ⊥)) x Δ) Δ))
+(test-equal '((((* x) ⊤) (x ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) ((x ⊥)) x Δ) Δ))
+(test-equal '(((x ⊤) ((* x) ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) ((x ⊥) ((* x) ⊤)) x Δ) Δ))
+(test-equal '(((x ⊤) ((* x) ⊤))) (judgment-holds (lv⇑⇑ ((x (~ int))) ((x ⊥) ((* x) ⊥)) x Δ) Δ))
+
+;; fully uninitialize a path
+(define-judgment-form patina-checked
+  #:mode (lv⇓⇓ I I I O)
+  #:contract (lv⇓⇓ Γ Δ lv Δ)
+  [(lv⊢ Γ lv int) (Δ↓ Δ_0 lv Δ_1)
+   ------------------------------ "lv⇓⇓ int"
+        (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   ]
+  [(lv⊢ Γ lv (~ τ)) (lv⇓⇓ Γ Δ_0 (* lv) Δ_1) (Δ↓ Δ_1 lv Δ_2)
+   -------------------------------------------------------- "lv⇓⇓ ~τ"
+                       (lv⇓⇓ Γ Δ_0 lv Δ_2)
+   ]
+  )
+
+(test-equal '(((x ⊥))) (judgment-holds (lv⇓⇓ ((x int)) () x Δ) Δ))
+(test-equal '(((x ⊥))) (judgment-holds (lv⇓⇓ ((x int)) ((x ⊤)) x Δ) Δ))
+(test-equal '(((x ⊥))) (judgment-holds (lv⇓⇓ ((x int)) ((x ⊥)) x Δ) Δ))
+(test-equal '(((x ⊥) ((* x) ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) () x Δ) Δ))
+(test-equal '((((* x) ⊥) (x ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) ((x ⊤)) x Δ) Δ))
+(test-equal '(((x ⊥) ((* x) ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) ((x ⊤) ((* x) ⊤)) x Δ) Δ))
+(test-equal '(((x ⊥) ((* x) ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) ((x ⊤) ((* x) ⊥)) x Δ) Δ))
+(test-equal '((((* x) ⊥) (x ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) ((x ⊥)) x Δ) Δ))
+(test-equal '(((x ⊥) ((* x) ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) ((x ⊥) ((* x) ⊤)) x Δ) Δ))
+(test-equal '(((x ⊥) ((* x) ⊥))) (judgment-holds (lv⇓⇓ ((x (~ int))) ((x ⊥) ((* x) ⊥)) x Δ) Δ))
 
 ;; evaluate a path down to the address it refers to
 (define-judgment-form patina-machine
@@ -374,6 +450,11 @@
    ]
   )
 
+(test-equal '((int ())) (judgment-holds (rv⊢ () () () 0 τ Δ) (τ Δ)))
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ⊤)) () (x + x) τ Δ) (τ Δ)) '((int ((x ⊤)))))
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ⊤)) () x τ Δ) (τ Δ)) '((int ((x ⊥)))))
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ⊤)) () (new x) τ Δ) (τ Δ)) '(((~ int) ((x ⊥)))))
+
 ;; evaluate an expression and store the result at the provided address
 (define-judgment-form patina-machine
   #:mode (rv-> I I I I I O)
@@ -400,6 +481,7 @@
    ]
   )
 
+(test-equal (judgment-holds (rv-> () () (((0 0) ⊥)) (0 0) 0 μ) μ) '((((0 0) 0))))
 (test-equal (judgment-holds (rv-> ((x int)) ((x (0 0))) (((0 0) 1) ((1 0) ⊥)) (1 0) (x + x) μ) μ)
             '((((0 0) 1) ((1 0) 2))))
 (test-equal (judgment-holds (rv-> ((x int)) ((x (0 0))) (((0 0) 1) ((1 0) ⊥)) (1 0) x μ) μ)
@@ -409,6 +491,7 @@
             '((((0 0) ⊥) ((1 0) (2 0)) ((2 0) 1))))
 
 ;; typechecking for statements
+; TODO remove paths from Δ when they are freed
 (define-judgment-form patina-checked
   #:mode (s⊢ I I I I O)
   #:contract (s⊢ Γ Δ Σ s Δ)
@@ -422,7 +505,8 @@
   [(where Γ_1 ,(cons (term (x τ)) (term Γ_0)))
    (lv⇓⇓ Γ_1 Δ_0 x Δ_1)
    (s⊢ Γ_1 Δ_1 Σ (block (vd_0 ...) s ()) Δ_2)
-   (lv⇓ Γ_1 Δ_2 x)
+   ;(lv⇓ Γ_1 Δ_2 x)
+   (lv↓ Γ_1 Δ_2 x)
    ---------------------------------------------------------- "s⊢ block alloc"
    (s⊢ Γ_0 Δ_0 Σ (block ((x : τ) vd_0 ...) s ()) Δ_2)
    ]
@@ -438,12 +522,30 @@
    (s⊢ Γ Δ_0 Σ (lv = rv) Δ_2)
    ]
   [(lv⊢ Γ lv τ)
-   (lv↓ Γ Δ_0 lv)
+   (lv↓ Γ Δ_0 lv) ; subpaths are uninitialized
+   (Δ= Δ_0 lv ⊤) ; but the path is initialized (prevents double/unnecessary deletes)
    (lv⇓⇓ Γ Δ_0 lv Δ_1)
    ------------------------- "s⊢ delete"
    (s⊢ Γ Δ_0 Σ (delete lv) Δ_1)
    ]
   )
+
+(test-equal (judgment-holds (s⊢ () () () () Δ) Δ) '(()))
+(test-equal (judgment-holds (s⊢ () () () (() ()) Δ) Δ) '(()))
+(test-equal (judgment-holds (s⊢ () () () (block ((x : int)) () ()) Δ) Δ) '(((x ⊥))))
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ⊥)) () (x = 1) Δ) Δ) '(((x ⊤))))
+(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ⊤) (y ⊥)) () (y = x) Δ) Δ) '(((x ⊥) (y ⊤))))
+(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ⊤) (y ⊥)) () ((y = x) (x = y)) Δ) Δ) '(((x ⊤) (y ⊥))))
+(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ⊤) (y ⊥)) () ((y = x) (y = x)) Δ) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ⊤)) () (delete x) Δ) Δ) '(((x ⊥))))
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊥)) () (delete x) Δ) Δ) 
+	    '(((x ⊥) ((* x) ⊥))))
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊤)) () (delete (* x)) Δ) Δ)
+	    '(((x ⊤) ((* x) ⊥))))
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊤)) () (delete x) Δ) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ⊤)) () ((delete x) (delete x)) Δ) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊤)) () ((delete (* x)) (delete (* x))) Δ) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x (~ int)) (y int)) ((x ⊤) ((* x) ⊤) (y ⊥)) () ((y = (* x)) (delete (* x))) Δ) Δ) '())
 
 ;; small-step evaluation for statements
 (define-judgment-form patina-machine
@@ -491,33 +593,50 @@
    ]
   )
 
+(test-equal '((() () () (() ()))) (judgment-holds (s-> () () () (() () ()) Γ V μ s) (Γ V μ s)))
+(test-equal '((() () () ())) (judgment-holds (s-> () () () (block () () ()) Γ V μ s) (Γ V μ s)))
+(test-equal (judgment-holds (s-> () () () (block ((x : int)) () ()) Γ V μ s) (Γ V μ s))
+	    '((((x int)) ((x (0 0))) (((0 0) ⊥)) (block () () ((x : int))))))
+(test-equal (judgment-holds (s-> ((x int)) ((x (0 0))) (((0 0) ⊥)) (block () () ((x : int))) Γ V μ s) (Γ V μ s))
+	    '((() () () (block () () ()))))
+(test-equal (judgment-holds (s-> ((x int) (y int)) ((x (0 0)) (y (1 0))) (((0 0) 1) ((1 0) ⊥)) (y = x) Γ V μ s) (Γ V μ s))
+	    '((((x int) (y int)) ((x (0 0)) (y (1 0))) (((0 0) ⊥) ((1 0) 1)) ())))
+(test-equal (judgment-holds (s-> ((x int)) ((x (0 0))) (((0 0) 1)) (delete x) Γ V μ s) (Γ V μ s))
+	    '((((x int)) ((x (0 0))) (((0 0) 1)) ())))
+(test-equal (judgment-holds (s-> ((x (~ int))) ((x (0 0))) (((0 0) (1 0)) ((1 0) 1)) (delete (* x)) Γ V μ s) (Γ V μ s))
+	    '((((x (~ int))) ((x (0 0))) (((0 0) (1 0))) ())))
+
 (define patina-step
   (reduction-relation patina-machine
     [--> (Γ_0 V_0 μ_0 s_0)
          (Γ_1 V_1 μ_1 s_1)
          (judgment-holds (s-> Γ_0 V_0 μ_0 s_0 Γ_1 V_1 μ_1 s_1))]))
 
-;(judgment-holds
-  ;(s⊢ () () ()
-    ;(block ((x : int) (y : (~ int)) (z : int)) 
-           ;((x = 1) 
-            ;(y = (new x))
-            ;(z = (* y))
-            ;((* y) = z) 
-            ;(delete (* y))
-            ;) 
-           ;())
-    ;Δ))
+(test-equal #t
+(judgment-holds
+  (s⊢ () () ()
+    (block ((x : int) (y : (~ int)) (z : int)) 
+           ((x = 1) 
+            (y = (new x))
+            (z = (* y))
+            ((* y) = z) 
+            (delete (* y))
+            ) 
+           ())
+    Δ))
+)
 
-;(apply-reduction-relation* patina-step
-  ;(term  (() () ()
-    ;(block ((x : int) (y : (~ int)) (z : int)) 
-           ;((x = 1) 
-            ;(y = (new x))
-            ;(z = (* y))
-            ;((* y) = z) 
-            ;(delete (* y))
-            ;) 
-           ;()))))
+(test-equal '((() () () ()))
+(apply-reduction-relation* patina-step
+  (term  (() () ()
+    (block ((x : int) (y : (~ int)) (z : int)) 
+           ((x = 1) 
+            (y = (new x))
+            (z = (* y))
+            ((* y) = z) 
+            (delete (* y))
+            ) 
+           ()))))
+)
 
 (test-results)
