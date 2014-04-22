@@ -62,6 +62,8 @@
   (Γ ((x τ) ...))
   ;; lifetime of variables (i.e. lifetime of the block they are declared in)
   (Λ ((x ℓ) ...))
+  ;; the stack of lifetimes (to define the ordering of lifetimes)
+  (L (ℓ ...))
   ;; initialization flags
   (ι ⊥ ; uninitialized
      ⊤ ; initialized
@@ -70,6 +72,15 @@
   (Δ ((lv ι) ...))
   ;; heap typing
   (Σ ((α τ) ...))
+  ;; actions that can be forbidden by borrows
+  (action mutate ; assign to (change the data)
+          claim  ; borrow mutably (claim sole mutability rights)
+          freeze ; borrow immutably (prevent data mutating underneath the borrow)
+          )
+  ;; a restriction is a path and a list of forbidden actions (empty list implies move is forbidden
+  (restriction (lv (action ...)))
+  ;; a loan on a path for a certain lifetime and mutability carries a list of restrictions that prevent loan invalidation
+  (loan (lv ℓ mq (restriction ...)))
   )
 
 ;; lookup type of a variable
@@ -94,6 +105,26 @@
 
 (test-equal '(ℓ0) (judgment-holds (Λ= ((x ℓ0)) x ℓ) ℓ))
 
+;; ℓ₁ ≤ ℓ₂ (ℓ₁ does not exceed ℓ₂)
+(define-judgment-form patina-checked
+  #:mode (ℓ≤ I I I)
+  #:contract (ℓ≤ L ℓ ℓ)
+  [-------------- "ℓ≤ reflexive"
+   (ℓ≤ L ℓ_0 ℓ_0)
+   ]
+  [---------------------------------------------- "ℓ≤ ordered"
+   (ℓ≤ (ℓ_s ... ℓ_0 ℓ_m ... ℓ_1 ℓ_e ...) ℓ_0 ℓ_1)
+   ]
+  )
+
+(test-equal #t (judgment-holds (ℓ≤ () ℓ0 ℓ0)))
+(test-equal #f (judgment-holds (ℓ≤ () ℓ0 ℓ1)))
+(test-equal #t (judgment-holds (ℓ≤ (ℓ5 ℓ4 ℓ3 ℓ2 ℓ1 ℓ0) ℓ4 ℓ2)))
+(test-equal #t (judgment-holds (ℓ≤ (ℓ5 ℓ4 ℓ3 ℓ2 ℓ1 ℓ0) ℓ4 ℓ4)))
+(test-equal #t (judgment-holds (ℓ≤ (ℓ5 ℓ4 ℓ3 ℓ2 ℓ1 ℓ0) ℓ4 ℓ3)))
+(test-equal #f (judgment-holds (ℓ≤ (ℓ5 ℓ4 ℓ3 ℓ2 ℓ1 ℓ0) ℓ3 ℓ4)))
+(test-equal #f (judgment-holds (ℓ≤ (ℓ5 ℓ4 ℓ3 ℓ2 ℓ1 ℓ0) ℓ6 ℓ4)))
+
 ;; look up initialization status of a path
 (define-judgment-form patina-checked
   #:mode (Δ= I I O)
@@ -112,8 +143,8 @@
   [---------- "Δ? empty"
    (Δ? () lv)
    ]
-  [(Δ? ((lv_1 ι_1) ...) lv_2)
-   (where (lv_!_0 lv_!_0) (lv_0 lv_2))
+  [(where (lv_!_0 lv_!_0) (lv_0 lv_2))
+   (Δ? ((lv_1 ι_1) ...) lv_2)
    ----------------------------------- "Δ? cons"
    (Δ? ((lv_0 _) (lv_1 ι_1) ...) lv_2)
    ]
@@ -156,6 +187,76 @@
 (test-equal '(((x ⊥) (y ⊤))) (judgment-holds (Δ↓ ((x ⊥) (y ⊤)) x Δ) Δ))
 (test-equal '(((x ⊥) (y ⊤))) (judgment-holds (Δ↓ ((x ⊤) (y ⊤)) x Δ) Δ))
 (test-equal '(((x ⊥) (y ⊤))) (judgment-holds (Δ↓ ((y ⊤)) x Δ) Δ))
+
+;; check if an action is in an action set
+(define-judgment-form patina-checked
+  #:mode (action∈ I I)
+  #:contract (action∈ (action ...) action)
+  [------------------------------------------------------- "action∈"
+   (action∈ (action_s ... action_0 action_e ...) action_0)
+   ]
+  )
+
+(test-equal #t (judgment-holds (action∈ (mutate) mutate)))
+(test-equal #f (judgment-holds (action∈ () mutate)))
+
+;; check if an action is not in an action set
+(define-judgment-form patina-checked
+  #:mode (action∉ I I)
+  #:contract (action∉ (action ...) action)
+  [------------------- "action∉ empty"
+   (action∉ () action)
+   ]
+  [(where (action_!_0 action_!_0) (action_s action_0))
+   (action∉ (action_e ...) action_0)
+   --------------------------------------------------- "action∉ cons"
+   (action∉ (action_s action_e ...) action_0)
+   ]
+  )
+
+(test-equal #f (judgment-holds (action∉ (mutate) mutate)))
+(test-equal #t (judgment-holds (action∉ (claim) mutate)))
+
+;; union of action sets
+(define-judgment-form patina-checked
+  #:mode (action∪ I I O)
+  #:contract (action∪ (action ...) (action ...) (action ...))
+  [(action∈ (action_1 ...) action_0s)
+   (action∪ (action_0e ...) (action_1 ...) (action_2 ...))
+   ----------------------------------------------------------------- "action∪ - in both"
+   (action∪ (action_0s action_0e ...) (action_1 ...) (action_2 ...))
+   ]
+  [(action∉ (action_1 ...) action_0s)
+   (action∪ (action_0e ...) (action_1 ...) (action_2 ...))
+   --------------------------------------------------------------------------- "action∪ - in first only"
+   (action∪ (action_0s action_0e ...) (action_1 ...) (action_0s action_2 ...))
+   ]
+  [------------------------------------------ "action∪ - first empty"
+   (action∪ () (action_1 ...) (action_1 ...))
+   ]
+  )
+
+(test-equal (judgment-holds (action∪ () () (action ...)) (action ...)) '(()))
+(test-equal (judgment-holds (action∪ () (mutate claim) (action ...)) (action ...)) '((mutate claim)))
+(test-equal (judgment-holds (action∪ (claim mutate) () (action ...)) (action ...)) '((claim mutate)))
+(test-equal (judgment-holds (action∪ (mutate) (mutate) (action ...)) (action ...)) '((mutate)))
+(test-equal (judgment-holds (action∪ (claim) (mutate) (action ...)) (action ...)) '((claim mutate)))
+(test-equal (judgment-holds (action∪ (mutate) (claim) (action ...)) (action ...)) '((mutate claim)))
+
+;; subset for action sets
+(define-judgment-form patina-checked
+  #:mode (action⊆ I I)
+  #:contract (action⊆ (action ...) (action ...))
+  [(action∈ (action_1 ...) action_0) ...
+   --------------------------------------- "action⊆"
+   (action⊆ (action_0 ...) (action_1 ...))
+   ]
+  )
+
+(test-equal #t (judgment-holds (action⊆ () ())))
+(test-equal #t (judgment-holds (action⊆ () (mutate))))
+(test-equal #f (judgment-holds (action⊆ (mutate) ())))
+(test-equal #t (judgment-holds (action⊆ (mutate claim) (claim mutate))))
 
 ;; typechecking for paths. makes sure a path will be allocated, but not necessarily initialized
 (define-judgment-form patina-checked
@@ -418,13 +519,115 @@
 
 ;; lifetime of a borrow does not exceed the lifetime of the borrowee
 (define-judgment-form patina-checked
-  #:mode (lifetime I I I I I)
-  #:contract (lifetime Γ Λ lv ℓ mq)
-  [(scope Γ Λ x) ; TODO hold ordering on lifetimes
+  #:mode (lifetime I I I I I I)
+  #:contract (lifetime Γ Λ L lv ℓ mq)
+  [(scope Γ Λ x ℓ_x) 
+   (ℓ≤ L ℓ ℓ_x)
    --------------------- "lifetime - variable"
-   (lifetime Γ Λ x ℓ mq)
+   (lifetime Γ Λ L x ℓ mq)
+   ]
+  [(lv⊢ Γ lv (~ τ))
+   (lifetime Γ Λ L lv ℓ mq)
+   ---------------------------- "lifetime - owned pointer"
+   (lifetime Γ Λ L (* lv) ℓ mq)
+   ]
+  [(lv⊢ Γ lv (& ℓ_1 _ τ))
+   (ℓ≤ L ℓ_0 ℓ_1)
+   ---------------------------- "lifetime - borrowed pointer"
+   (lifetime Γ Λ L (* lv) ℓ_0 mq)
    ]
   )
+
+(test-equal #t (judgment-holds (lifetime ((x int)) ((x ℓ0)) (ℓ1 ℓ0) x ℓ1 imm)))
+(test-equal #t (judgment-holds (lifetime ((x int)) ((x ℓ0)) (ℓ1 ℓ0) x ℓ1 mut)))
+(test-equal #t (judgment-holds (lifetime ((x int)) ((x ℓ0)) (ℓ1 ℓ0) x ℓ0 imm)))
+(test-equal #t (judgment-holds (lifetime ((x int)) ((x ℓ0)) (ℓ1 ℓ0) x ℓ0 mut)))
+(test-equal #f (judgment-holds (lifetime ((x int)) ((x ℓ1)) (ℓ1 ℓ0) x ℓ0 imm)))
+(test-equal #f (judgment-holds (lifetime ((x int)) ((x ℓ1)) (ℓ1 ℓ0) x ℓ0 mut)))
+(test-equal #t (judgment-holds (lifetime ((x int)) ((x ℓ1)) (ℓ1 ℓ0) x ℓ1 imm)))
+(test-equal #t (judgment-holds (lifetime ((x int)) ((x ℓ1)) (ℓ1 ℓ0) x ℓ1 mut)))
+(test-equal #f (judgment-holds (lifetime ((x int)) ((x ℓ1)) (ℓ1 ℓ0) x ℓ2 imm)))
+(test-equal #f (judgment-holds (lifetime ((x int)) ((x ℓ1)) (ℓ1 ℓ0) x ℓ2 mut)))
+(test-equal #t (judgment-holds (lifetime ((x (~ int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ0 imm)))
+(test-equal #t (judgment-holds (lifetime ((x (~ int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ0 mut)))
+(test-equal #t (judgment-holds (lifetime ((x (~ int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ1 imm)))
+(test-equal #t (judgment-holds (lifetime ((x (~ int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ1 mut)))
+(test-equal #t (judgment-holds (lifetime ((x (& ℓ0 mut int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ0 imm)))
+(test-equal #t (judgment-holds (lifetime ((x (& ℓ0 mut int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ0 mut)))
+(test-equal #t (judgment-holds (lifetime ((x (& ℓ0 mut int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ1 imm)))
+(test-equal #t (judgment-holds (lifetime ((x (& ℓ0 mut int))) ((x ℓ0)) (ℓ1 ℓ0) (* x) ℓ1 mut)))
+(test-equal #f (judgment-holds (lifetime ((x (& ℓ1 mut int))) ((x ℓ1)) (ℓ1 ℓ0) (* x) ℓ0 imm)))
+(test-equal #f (judgment-holds (lifetime ((x (& ℓ1 mut int))) ((x ℓ1)) (ℓ1 ℓ0) (* x) ℓ0 mut)))
+(test-equal #t (judgment-holds (lifetime ((x (& ℓ1 mut int))) ((x ℓ1)) (ℓ1 ℓ0) (* x) ℓ1 imm)))
+(test-equal #t (judgment-holds (lifetime ((x (& ℓ1 mut int))) ((x ℓ1)) (ℓ1 ℓ0) (* x) ℓ1 mut)))
+
+;; compute the restrictions required to prevent borrow invalidation
+(define-judgment-form patina-checked
+  #:mode (restrictions I I I I I O)
+  #:contract (restrictions Γ L lv ℓ (action ...) (restriction ...))
+  [---------------------------------------------------- "restrictions - variable"
+   (restrictions Γ L x ℓ (action ...) ((x (action ...))))
+   ]
+  [(lv⊢ Γ lv (~ τ))
+   (action∪ (mutate claim) (action ...) (action_1 ...))
+   (restrictions Γ L lv ℓ (action_1 ...) (restriction_s ...))
+   ---------------------------------------------------------------------------------- "restrictions - owned pointer"
+   (restrictions Γ L (* lv) ℓ (action ...) (restriction_s ... ((* lv) (action ...))))
+   ]
+  [(lv⊢ Γ lv (& ℓ_1 imm τ))
+   (ℓ≤ L ℓ_0 ℓ_1)
+   (action⊆ (action ...) (mutate claim))
+   --------------------------------------------- "restrictions - immutable borrow"
+   (restrictions Γ L (* lv) ℓ_0 (action ...) ())
+   ]
+  [(lv⊢ Γ lv (& ℓ_1 mut τ))
+   (ℓ≤ L ℓ_0 ℓ_1)
+   (restrictions Γ L lv ℓ_0 (action ...) (restriction_s ...))
+   ------------------------------------------------------------------------------------ "restrictions - mutable borrow"
+   (restrictions Γ L (* lv) ℓ_0 (action ...) (restriction_s ... ((* lv) (action ...))))
+   ]
+  )
+
+(test-equal (judgment-holds (restrictions ((x int)) (ℓ1 ℓ0) x ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x int)) (ℓ1 ℓ0) x ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x int)) (ℓ1 ℓ0) x ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x int)) (ℓ1 ℓ0) x ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (~ int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (~ int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (~ int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (~ int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '(()))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '(()))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(()))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(()))
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(()))
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(()))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim) (restriction ...)) (restriction ...)) '(((x (mutate claim)) ((* x) (mutate claim)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 imm int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ0 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ0 (mutate claim freeze) (restriction ...)) (restriction ...)) '())
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
+(test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
 
 ;; typechecking for expressions. tracks initialization of paths
 (define-judgment-form patina-checked
