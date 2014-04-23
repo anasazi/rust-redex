@@ -81,6 +81,8 @@
   (restriction (lv (action ...)))
   ;; a loan on a path for a certain lifetime and mutability carries a list of restrictions that prevent loan invalidation
   (loan (lv ℓ mq (restriction ...)))
+  ;; the set of current loans (who holds the loans? well the bank of course)
+  ($ (loan ...))
   )
 
 ;; lookup type of a variable
@@ -317,7 +319,8 @@
    --------------------------------------------- "lv⇓ ~τ"
                     (lv⇓ Γ Δ lv)
    ]
-  [(lv⊢ Γ lv (& ℓ mq τ)) (Δ= Δ lv ⊥) (lv⇓ Γ Δ (* lv))
+  ;[(lv⊢ Γ lv (& ℓ mq τ)) (Δ= Δ lv ⊥) (lv⇓ Γ Δ (* lv))
+  [(lv⊢ Γ lv (& ℓ mq τ)) (Δ= Δ lv ⊥) ;(lv⇓ Γ Δ (* lv)) ; TODO figure out
    -------------------------------------------------- "lv⇓ &'ℓ mq τ"
 		    (lv⇓ Γ Δ lv)
    ]
@@ -629,88 +632,204 @@
 (test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
 (test-equal (judgment-holds (restrictions ((x (& ℓ1 mut int))) (ℓ1 ℓ0) (* x) ℓ1 (mutate claim freeze) (restriction ...)) (restriction ...)) '(((x (mutate claim freeze)) ((* x) (mutate claim freeze)))))
 
-;; typechecking for expressions. tracks initialization of paths
+;; helper judgment that checks if a restriction allows an action on a path
 (define-judgment-form patina-checked
-  #:mode (rv⊢ I I I I O O)
-  #:contract (rv⊢ Γ Δ Σ rv τ Δ)
-  [------------------- "rv⊢ int"
-   (rv⊢ Γ Δ Σ z int Δ)
+  #:mode (restriction-allows I I I)
+  #:contract (restriction-allows restriction action lv)
+  [---------------------------------------- "restriction-allows irrelevant"
+   (restriction-allows (lv_!_0 _) _ lv_!_0)
    ]
-  [(lv⊢ Γ lv_1 int) (lv⇑ Γ Δ lv_1)
-   (lv⊢ Γ lv_2 int) (lv⇑ Γ Δ lv_2)
-   ------------------------------- "rv⊢ plus"
-   (rv⊢ Γ Δ Σ (lv_1 + lv_2) int Δ)
-   ]
-  [(lv⊢ Γ lv τ) (lv⇑ Γ Δ_0 lv) (lv⇓⇓ Γ Δ_0 lv Δ_1)
-   ----------------------------------------------- "rv⊢ lv"
-              (rv⊢ Γ Δ_0 Σ lv τ Δ_1)
-   ]
-  [(lv⊢ Γ lv τ) (lv⇑ Γ Δ_0 lv) (lv⇓⇓ Γ Δ_0 lv Δ_1)
-   ----------------------------------------------- "rv⊢ new"
-           (rv⊢ Γ Δ_0 Σ (new lv) (~ τ) Δ_1)
+  [(action∉ (action_s ...) action_0)
+   -------------------------------------------------------- "restriction-allows relevant"
+   (restriction-allows (lv_0 (action_s ...)) action_0 lv_0)
    ]
   )
 
-(test-equal '((int ())) (judgment-holds (rv⊢ () () () 0 τ Δ) (τ Δ)))
-(test-equal (judgment-holds (rv⊢ ((x int)) ((x ⊤)) () (x + x) τ Δ) (τ Δ)) '((int ((x ⊤)))))
-(test-equal (judgment-holds (rv⊢ ((x int)) ((x ⊤)) () x τ Δ) (τ Δ)) '((int ((x ⊥)))))
-(test-equal (judgment-holds (rv⊢ ((x int)) ((x ⊤)) () (new x) τ Δ) (τ Δ)) '(((~ int) ((x ⊥)))))
+;; helper judgment that checks if a loan allows an action on a path
+(define-judgment-form patina-checked
+  #:mode (loan-allows I I I)
+  #:contract (loan-allows loan action lv)
+  [(restriction-allows restriction action lv) ...
+   ------------------------------------------------- "loan-allows"
+   (loan-allows (_ _ _ (restriction ...)) action lv)
+   ]
+  )
+
+;; an action is allowed on a path given the current loans in effect
+; for all restrictions on current loans, if the restriction is on a path then it does not forbid the action
+(define-judgment-form patina-checked
+  #:mode (allowed I I I)
+  #:contract (allowed (loan ...) action lv)
+  [(loan-allows loan action lv) ...
+   -------------------------------- "allowed"
+    (allowed (loan ...) action lv)
+   ]
+  )
+
+(test-equal #t (judgment-holds (allowed ((x ℓ0 imm ((x (mutate claim)))) (x ℓ1 imm ((x (mutate claim))))) freeze x)))
+(test-equal #f (judgment-holds (allowed ((x ℓ0 imm ((x (mutate claim)))) (x ℓ1 imm ((x (mutate claim))))) mutate x)))
+(test-equal #f (judgment-holds (allowed ((x ℓ0 imm ((x (mutate claim)))) (x ℓ1 imm ((x (mutate claim))))) claim x)))
+; we can freeze a mutable borrow if we unfreeze before releasing the mutable borrow
+(test-equal #t (judgment-holds (allowed (((* x) ℓ0 mut ((x (mutate claim)) ((* x) (mutate claim))))) freeze (* x))))
+; we can't mutably borrow something already mutably borrowed
+(test-equal #f (judgment-holds (allowed (((* x) ℓ0 mut ((x (mutate claim freeze)) ((* x) (mutate claim freeze))))) claim (* x))))
+
+;; allowed to move. since restrictions on moving are indicated by the presence of *any* restriction clause, we need a slightly different judgment
+
+; helper judgment to process a restriction
+(define-judgment-form patina-checked
+  #:mode (restriction-allows-move I I)
+  #:contract (restriction-allows-move restriction lv)
+  [------------------------------------------- "restriction-allows-move"
+   (restriction-allows-move (lv_!_0 _) lv_!_0)
+   ]
+  )
+
+; helper judgment to process a loan
+(define-judgment-form patina-checked
+  #:mode (loan-allows-move I I)
+  #:contract (loan-allows-move loan lv)
+  [(restriction-allows-move restriction lv) ...
+   ----------------------------------------------- "loan-allows-move"
+   (loan-allows-move (_ _ _ (restriction ...)) lv)
+   ]
+  )
+; the main judgment
+(define-judgment-form patina-checked
+  #:mode (allowed-to-move I I)
+  #:contract (allowed-to-move $ lv)
+  [(loan-allows-move loan lv) ...
+   ------------------------------- "allowed-to-move"
+   (allowed-to-move (loan ...) lv)
+   ]
+  )
+
+;; typechecking for expressions. tracks initialization of paths
+(define-judgment-form patina-checked
+  #:mode (rv⊢ I I I I I I I O O O)
+  #:contract (rv⊢ Γ Λ L $ Δ Σ rv τ Δ $)
+  [--------------------------- "rv⊢ int"
+   (rv⊢ Γ Λ L $ Δ Σ z int Δ $)
+   ]
+  [(lv⊢ Γ lv_1 int) (lv⇑ Γ Δ lv_1)
+   (lv⊢ Γ lv_2 int) (lv⇑ Γ Δ lv_2)
+   --------------------------------------- "rv⊢ plus"
+   (rv⊢ Γ Λ L $ Δ Σ (lv_1 + lv_2) int Δ $)
+   ]
+  [(lv⊢ Γ lv τ) 
+   (lv⇑ Γ Δ_0 lv) 
+   (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   (allowed-to-move $ lv)
+   ------------------------------ "rv⊢ lv"
+   (rv⊢ Γ Λ L $ Δ_0 Σ lv τ Δ_1 $)
+   ]
+  [(lv⊢ Γ lv τ) 
+   (lv⇑ Γ Δ_0 lv) 
+   (lv⇓⇓ Γ Δ_0 lv Δ_1)
+   (allowed-to-move $ lv)
+   ---------------------------------------- "rv⊢ new" 
+   (rv⊢ Γ Λ L $ Δ_0 Σ (new lv) (~ τ) Δ_1 $)
+   ]
+  [(lv⊢ Γ lv τ)
+   (lv⇑ Γ Δ lv)
+   (mutability Γ lv imm)
+   (aliasable Γ lv imm) 
+   (lifetime Γ Λ L lv ℓ imm)
+   (restrictions Γ L lv ℓ (mutate claim) (restriction ...))
+   (allowed $_0 freeze lv)
+   (where $_1 ,(cons (term (lv ℓ imm (restriction ...))) (term $_0)))
+   ------------------------------------------------------------------ "rv⊢ &imm"
+   (rv⊢ Γ Λ L $_0 Δ Σ (& ℓ imm lv) (& ℓ imm τ) Δ $_1)
+   ]
+  [(lv⊢ Γ lv τ)
+   (lv⇑ Γ Δ lv)
+   (mutability Γ lv mut)
+   (aliasable Γ lv mut)
+   (lifetime Γ Λ L lv ℓ mut)
+   (restrictions Γ L lv ℓ (mutate claim freeze) (restriction ...))
+   (allowed $_0 claim lv)
+   (where $_1 ,(cons (term (lv ℓ mut (restriction ...))) (term $_0)))
+   ------------------------------------------------------------------ "rv⊢ &mut"
+   (rv⊢ Γ Λ L $_0 Δ Σ (& ℓ mut lv) (& ℓ mut τ) Δ $_1)
+   ]
+  )
+
+(test-equal '((int () ())) (judgment-holds (rv⊢ () () () () () () 0 τ Δ $) (τ Δ $)))
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) () ((x ⊤)) () (x + x) τ Δ $) (τ Δ $)) '((int ((x ⊤)) ())))
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) () ((x ⊤)) () x τ Δ $) (τ Δ $)) '((int ((x ⊥)) ())))
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) () ((x ⊤)) () (new x) τ Δ $) (τ Δ $)) '(((~ int) ((x ⊥)) ())))
+; can borrow an unaliased variable immutably
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) () ((x ⊤)) () (& ℓ0 imm x) τ Δ $) (τ Δ $)) '(((& ℓ0 imm int) ((x ⊤)) ((x ℓ0 imm ((x (mutate claim))))))))
+; can reborrow immutably if already borrowed immutably (TODO duplicates the loan info...)
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) ((x ℓ0 imm ((x (mutate claim))))) ((x ⊤)) () (& ℓ0 imm x) τ Δ $) $) '(((x ℓ0 imm ((x (mutate claim)))) (x ℓ0 imm ((x (mutate claim)))))))
+; cannot reborrow immutably if already borrowed mutably
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) ((x ℓ0 mut ((x (mutate claim freeze))))) ((x ⊤)) () (& ℓ0 imm x) τ Δ $) $) '())
+; can borrow an unaliased variable mutably
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) () ((x ⊤)) () (& ℓ0 mut x) τ Δ $) (τ Δ $)) '(((& ℓ0 mut int) ((x ⊤)) ((x ℓ0 mut ((x (mutate claim freeze))))))))
+; cannot reborrow mutably if already borrowed immutably
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) ((x ℓ0 imm ((x (mutate claim))))) ((x ⊤)) () (& ℓ0 mut x) τ Δ $) $) '())
+; cannot reborrow mutably if already borrowed mutably
+(test-equal (judgment-holds (rv⊢ ((x int)) ((x ℓ0)) (ℓ0) ((x ℓ0 mut ((x (mutate claim freeze))))) ((x ⊤)) () (& ℓ0 mut x) τ Δ $) $) '())
 
 ;; typechecking for statements
 ; TODO maybe remove variables and their subpaths from Δ when they are freed
 (define-judgment-form patina-checked
-  #:mode (s⊢ I I I I O)
-  #:contract (s⊢ Γ Δ Σ s Δ)
-  [--------------- "s⊢ skip"
-   (s⊢ Γ Δ Σ () Δ)
+  #:mode (s⊢ I I I I I I I O O)
+  #:contract (s⊢ Γ Λ L $ Δ Σ s Δ $)
+  [----------------------- "s⊢ skip"
+   (s⊢ Γ Λ L $ Δ Σ () Δ $)
    ]
-  [(s⊢ Γ Δ_0 Σ s_1 Δ_1) (s⊢ Γ Δ_1 Σ (s_2 ...) Δ_2)
+  [(s⊢ Γ Λ L $_0 Δ_0 Σ s_1 Δ_1 $_1) (s⊢ Γ Λ L $_1 Δ_1 Σ (s_2 ...) Δ_2 $_2)
   ------------------------------------------------ "s⊢ seq"
-         (s⊢ Γ Δ_0 Σ (s_1 s_2 ...) Δ_2)
+         (s⊢ Γ Λ L $_0 Δ_0 Σ (s_1 s_2 ...) Δ_2 $_2)
    ]
   [(where Γ_1 ,(cons (term (x τ)) (term Γ_0)))
+   (where Λ_1 ,(cons (term (x ℓ)) (term Λ_0)))
+   (where L_1 ,(cons (term ℓ) (term L_0)))
    (lv⇓⇓ Γ_1 Δ_0 x Δ_1)
-   (s⊢ Γ_1 Δ_1 Σ (block ℓ (vd_0 ...) s ()) Δ_2)
+   (s⊢ Γ_1 Λ_1 L_1 $_0 Δ_1 Σ (block ℓ (vd_0 ...) s ()) Δ_2 $_1) ; TODO I think we can just throw away $_1.
    (lv↓ Γ_1 Δ_2 x) ; don't need to delete stack variables as long as their contents have been freed
    -------------------------------------------------- "s⊢ block alloc"
-   (s⊢ Γ_0 Δ_0 Σ (block ℓ ((x : τ) vd_0 ...) s ()) Δ_2)
+   (s⊢ Γ_0 Λ_0 L_0 $_0 Δ_0 Σ (block ℓ ((x : τ) vd_0 ...) s ()) Δ_2 $_0)
    ]
-  [          (s⊢ Γ Δ_0 Σ s Δ_1)   
+  [          (s⊢ Γ Λ L $_0 Δ_0 Σ s Δ_1 $_1)   ; TODO I think we can throw away $_1
    -------------------------------- "s⊢ block"
-   (s⊢ Γ Δ_0 Σ (block ℓ () s ()) Δ_1)
+   (s⊢ Γ Λ L $_0 Δ_0 Σ (block ℓ () s ()) Δ_1 $_0)
    ]
   [(lv⊢ Γ lv τ)
    (lv↓ Γ Δ_0 lv)
-   (rv⊢ Γ Δ_0 Σ rv τ Δ_1)
+   (allowed $_0 mutate lv)
+   (rv⊢ Γ Λ L $_0 Δ_0 Σ rv τ Δ_1 $_1) ; TODO need to propagate restrictions to lv
    (lv⇑⇑ Γ Δ_1 lv Δ_2)
-   -------------------------- "s⊢ assign"
-   (s⊢ Γ Δ_0 Σ (lv = rv) Δ_2)
+   -------------------------- "s⊢ assign" 
+   (s⊢ Γ Λ L $_0 Δ_0 Σ (lv = rv) Δ_2 $_1)
    ]
   [(lv⊢ Γ lv τ)
    (lv↓ Γ Δ_0 lv) ; subpaths are uninitialized
    (Δ= Δ_0 lv ⊤) ; but the path is initialized (prevents double/unnecessary deletes)
+   (allowed-to-move $ lv)
    (lv⇓⇓ Γ Δ_0 lv Δ_1)
    ---------------------------- "s⊢ delete"
-   (s⊢ Γ Δ_0 Σ (delete lv) Δ_1)
+   (s⊢ Γ Λ L $ Δ_0 Σ (delete lv) Δ_1 $)
    ]
   )
 
-(test-equal (judgment-holds (s⊢ () () () () Δ) Δ) '(()))
-(test-equal (judgment-holds (s⊢ () () () (() ()) Δ) Δ) '(()))
-(test-equal (judgment-holds (s⊢ () () () (block ℓ ((x : int)) () ()) Δ) Δ) '(((x ⊥))))
-(test-equal (judgment-holds (s⊢ ((x int)) ((x ⊥)) () (x = 1) Δ) Δ) '(((x ⊤))))
-(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ⊤) (y ⊥)) () (y = x) Δ) Δ) '(((x ⊥) (y ⊤))))
-(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ⊤) (y ⊥)) () ((y = x) (x = y)) Δ) Δ) '(((x ⊤) (y ⊥))))
-(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ⊤) (y ⊥)) () ((y = x) (y = x)) Δ) Δ) '())
-(test-equal (judgment-holds (s⊢ ((x int)) ((x ⊤)) () (delete x) Δ) Δ) '(((x ⊥))))
-(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊥)) () (delete x) Δ) Δ) 
-	    '(((x ⊥) ((* x) ⊥))))
-(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊤)) () (delete (* x)) Δ) Δ)
-	    '(((x ⊤) ((* x) ⊥))))
-(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊤)) () (delete x) Δ) Δ) '())
-(test-equal (judgment-holds (s⊢ ((x int)) ((x ⊤)) () ((delete x) (delete x)) Δ) Δ) '())
-(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ⊤) ((* x) ⊤)) () ((delete (* x)) (delete (* x))) Δ) Δ) '())
-(test-equal (judgment-holds (s⊢ ((x (~ int)) (y int)) ((x ⊤) ((* x) ⊤) (y ⊥)) () ((y = (* x)) (delete (* x))) Δ) Δ) '())
+(test-equal (judgment-holds (s⊢ () () () () () () () Δ $) Δ) '(()))
+(test-equal (judgment-holds (s⊢ () () () () () () (() ()) Δ $) Δ) '(()))
+(test-equal (judgment-holds (s⊢ () () () () () () (block ℓ ((x : int)) () ()) Δ $) Δ) '(((x ⊥))))
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ℓ0)) (ℓ) () ((x ⊥)) () (x = 1) Δ $) Δ) '(((x ⊤))))
+(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ℓ0) (y ℓ0)) (ℓ0) () ((x ⊤) (y ⊥)) () (y = x) Δ $) Δ) '(((x ⊥) (y ⊤))))
+(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ℓ) (y ℓ)) (ℓ) () ((x ⊤) (y ⊥)) () ((y = x) (x = y)) Δ $) Δ) '(((x ⊤) (y ⊥))))
+(test-equal (judgment-holds (s⊢ ((x int) (y int)) ((x ℓ) (y ℓ)) (ℓ) () ((x ⊤) (y ⊥)) () ((y = x) (y = x)) Δ $) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ℓ)) (ℓ) ((x ℓ imm ((x (mutate claim))))) ((x ⊥)) () ((x = 1)) Δ $) $) '())
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ℓ)) (ℓ) () ((x ⊤)) () (delete x) Δ $) Δ) '(((x ⊥))))
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ℓ)) (ℓ) () ((x ⊤) ((* x) ⊥)) () (delete x) Δ $) Δ) '(((x ⊥) ((* x) ⊥))))
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ℓ)) (ℓ) () ((x ⊤) ((* x) ⊤)) () (delete (* x)) Δ $) Δ) '(((x ⊤) ((* x) ⊥))))
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ℓ)) (ℓ) () ((x ⊤) ((* x) ⊤)) () (delete x) Δ $) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ℓ)) (ℓ) () ((x ⊤)) () ((delete x) (delete x)) Δ $) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x int)) ((x ℓ)) (ℓ) ((x ℓ imm ((x (mutate claim))))) ((x ⊥)) () (delete x) Δ $) $) '())
+(test-equal (judgment-holds (s⊢ ((x (~ int))) ((x ℓ)) (ℓ) () ((x ⊤) ((* x) ⊤)) () ((delete (* x)) (delete (* x))) Δ $) Δ) '())
+(test-equal (judgment-holds (s⊢ ((x (~ int)) (y int)) ((x ℓ) (y ℓ)) (ℓ) () ((x ⊤) ((* x) ⊤) (y ⊥)) () ((y = (* x)) (delete (* x))) Δ $) Δ) '())
 
 ;;;; EVALUATION
 (define-extended-language patina-machine patina-checked
@@ -1011,7 +1130,7 @@
 
 (test-equal #t
 (judgment-holds
-  (s⊢ () () ()
+  (s⊢ () () () () () ()
     (block ℓ ((x : int) (y : (~ int)) (z : int)) 
            ((x = 1) 
             (y = (new x))
@@ -1020,7 +1139,7 @@
             (delete (* y))
             ) 
            ())
-    Δ))
+    Δ $))
 )
 
 (test-equal '((() () () ()))
@@ -1035,5 +1154,73 @@
             ) 
            ()))))
 )
+
+; TODO fails because we current require all subpaths to be uninitialized before freeing stack
+; since (*y) == x is still initialized, this check fails
+; we need to change the check to look at the type:
+;   - if `int`, then we can just free it
+;   - if `~ τ`, then (* lv) must be ⊥
+;   - if `& ℓ mut τ`, then we can just free it
+;   - if `struct { f, g }`, then recurse onto `lv.f` and `lv.g`
+;(test-equal #t
+(judgment-holds
+  (s⊢ ((x int) (y (& ℓ imm int)))
+      ((x ℓ) (y ℓ))
+      (ℓ)
+      ()
+      ((x ⊥) (y ⊥) ((* y) ⊥))
+      ()
+      ((x = 1)
+       (y = (& ℓ imm x))
+       ((* y) = 2)
+       )
+      Δ
+      $)
+  Δ)
+(judgment-holds
+  (s⊢ ((x int) (y (& ℓ imm int)))
+      ((x ℓ) (y ℓ))
+      (ℓ)
+      ()
+      ((x ⊥) (y ⊥) ((* y) ⊥))
+      ()
+      ((x = 1)
+       (y = (& ℓ imm x))
+       ((* y) = 2)
+       )
+      Δ
+      $)
+  $)
+(build-derivations
+  (s⊢ ((x int) (y (& ℓ imm int)))
+      ((x ℓ) (y ℓ))
+      (ℓ)
+      ((x ℓ imm ((x (mutate claim)))))
+      ((x ⊤) (y ⊤) ((* y) ⊤))
+      ()
+      ((* y) = 2)
+      Δ
+      $))
+(judgment-holds
+  (s⊢ () () () () () ()
+      (block ℓ ((x : int) (y : (& ℓ imm int)))
+             ((x = 1)
+              (y = (& ℓ imm x))
+              ((* y) = 2)
+             )
+             ())
+      Δ $)
+  Δ)
+(judgment-holds
+  (s⊢ () () () () () ()
+      (block ℓ ((x : int) (y : (& ℓ imm int)))
+             ((x = 1)
+              (y = (& ℓ imm x))
+              ((* y) = 2)
+             )
+             ())
+      Δ $)
+  $)
+;)
 
 (test-results)
